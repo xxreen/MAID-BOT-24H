@@ -1,24 +1,17 @@
-# keep_alive.py - ReplitでのBot常時稼働用Webサーバー
+# keep_alive.py - RenderでのBot常時稼働用Webサーバー
 
 from flask import Flask
-from threading import Thread
+# osモジュールは不要になりましたが、もし将来的に環境変数PORTなどを直接扱う場合は必要になるかもしれません。
+# from os import environ # 不要な場合は削除してもOK
 
 app = Flask('') # Flaskアプリケーションを初期化
 
-# ルートURL (例: あなたのReplitプロジェクトのWebビューURL) にアクセスがあった場合に
+# ルートURL (例: Renderによって提供されるWebサービスURL) にアクセスがあった場合に
 # 「Bot is alive!」というテキストを返します。
 @app.route('/')
 def home():
     return "Bot is alive!"
 
-# Flaskアプリケーションを別のスレッドで実行する関数
-# これにより、WebサーバーがBotのメイン処理をブロックすることなく動作します。
-def run():
-    # Replitのデフォルトポートである8080番ポートで、すべてのIPアドレスからのアクセスを受け付けます。
-    app.run(host='0.0.0.0', port=8080)
-
-# Webサーバーを起動するための公開関数
-# main.pyからこの関数を呼び出すことで、Webサーバーがバックグラウンドで開始されます。
-def keep_alive():
-    t = Thread(target=run) # 'run'関数をターゲットとして新しいスレッドを作成
-    t.start() # スレッドを開始し、Webサーバーを起動
+# RenderではgunicornなどのWSGIサーバーで起動するため、
+# Replitのようにスレッドで起動する関数や、app.run()を直接呼び出す必要はありません。
+# gunicornがこのファイル内の 'app' オブジェクトを自動的に見つけて起動します。

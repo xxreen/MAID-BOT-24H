@@ -1,0 +1,24 @@
+# keep_alive.py - ReplitでのBot常時稼働用Webサーバー
+
+from flask import Flask
+from threading import Thread
+
+app = Flask('') # Flaskアプリケーションを初期化
+
+# ルートURL (例: あなたのReplitプロジェクトのWebビューURL) にアクセスがあった場合に
+# 「Bot is alive!」というテキストを返します。
+@app.route('/')
+def home():
+    return "Bot is alive!"
+
+# Flaskアプリケーションを別のスレッドで実行する関数
+# これにより、WebサーバーがBotのメイン処理をブロックすることなく動作します。
+def run():
+    # Replitのデフォルトポートである8080番ポートで、すべてのIPアドレスからのアクセスを受け付けます。
+    app.run(host='0.0.0.0', port=8080)
+
+# Webサーバーを起動するための公開関数
+# main.pyからこの関数を呼び出すことで、Webサーバーがバックグラウンドで開始されます。
+def keep_alive():
+    t = Thread(target=run) # 'run'関数をターゲットとして新しいスレッドを作成
+    t.start() # スレッドを開始し、Webサーバーを起動

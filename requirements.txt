@@ -1,6 +1,5 @@
-discord.py>=2.0.0
-Flask
-google-generativeai
+discord.py==2.3.2
+flask
 python-dotenv
-aiohttp
 requests
+gunicorn

@@ -76,4 +76,46 @@ async def generate_response(message_content: str, author_id: str, author_name: s
         )
     elif mode == "debate":
         prompt = (
-            "あなたは論破モードの毒舌AIです。相手の発言の矛盾点や過去の発言を利用して
+            "あなたは論破モードの毒舌AIです。相手の発言の矛盾点や過去の発言を利用して痛いところを突いてください。\n"
+            f"会話履歴:\n{memory_text}\n\n相手: {message_content}\nあなた:"
+        )
+    elif mode == "roast":
+        prompt = (
+            "あなたは超絶煽りモードの毒舌AIです。相手を論理と皮肉で叩きのめしてください。ただし暴力的脅迫やBANされる内容は禁止です。\n"
+            f"会話履歴:\n{memory_text}\n\n相手: {message_content}\nあなた:"
+        )
+    else:
+        prompt = (
+            "あなたは毒舌で、皮肉混じりの簡潔な返答をするAIです。\n"
+            f"会話履歴:\n{memory_text}\n\n相手: {message_content}\nあなた:"
+        )
+
+    try:
+        response = await asyncio.to_thread(model.generate_content, [prompt])
+        return response.text.strip()
+    except Exception as e:
+        print("Geminiエラー:", e)
+        return "ちょっとエラー。もう一回頼むわ。"
+
+# --- メッセージイベント ---
+@bot.event
+async def on_message(message):
+    if message.author.bot or message.channel.id != TARGET_CHANNEL_ID:
+        return
+
+    await bot.process_commands(message)
+
+    content = message.content.strip()
+    if not content.startswith("/"):
+        reply = await generate_response(content, str(message.author.id), message.author.name)
+        await message.channel.send(reply)
+
+# --- 起動ログ ---
+@bot.event
+async def on_ready():
+    print(f"ログイン成功: {bot.user}")
+    print("起動しました！")
+
+# --- 起動 ---
+if __name__ == "__main__":
+    bot.run(DISCORD_TOKEN)

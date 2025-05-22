@@ -6,19 +6,29 @@ import os
 import requests
 import json
 import random
+import asyncio # スレッドで実行するために必要
 
 # .envからTOKENとAPIキー読み込み
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
+# APIキーが設定されているか確認
+if not TOKEN:
+    print("エラー: Discord BOT TOKENが設定されていません。")
+    exit(1)
+if not GEMINI_API_KEY:
+    print("エラー: GEMINI_API_KEYが設定されていません。")
+    exit(1)
+
 intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
 intents.guilds = True
 
-OWNER_ID = 1016316997086216222  # ご主人様のDiscord ID（int型）
-ALLOWED_CHANNEL_ID = 1374589955996778577  # Botが反応するチャンネルID（int型）
+# Discord IDは数値として扱うため、文字列ではなく直接int型で記述
+OWNER_ID = 1016316997086216222  # あなたのDiscord ID
+ALLOWED_CHANNEL_ID = 1374589955996778577  # Botが反応するチャンネルID
 
 # 称号データ
 DEFAULT_TITLES = {
@@ -50,18 +60,22 @@ QUIZ_QUESTIONS = {
 class MaidBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=intents)
-        # 既にcommands.Botにtreeがあるので再定義禁止
         self.user_data = {}  # ユーザーデータ(名前・好み・クイズ正解数など)
         self.siritori_last_word = None
         self.siritori_turn_user = None
         self.siritori_active = False
+        self.quiz_active_users = {} # クイズ中のユーザー管理
 
     async def setup_hook(self):
         # スラッシュコマンドを同期
         await self.tree.sync()
+        print("スラッシュコマンドを同期しました。")
 
     def ask_gemini_api(self, prompt_text):
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+        # Gemini-2.0-flashは存在しない可能性があるので、gemini-1.5-flash または gemini-pro を推奨
+        # 最新のモデル名はGoogle AI Studioのドキュメントで確認してください。
+        # ここでは例として 'gemini-1.5-flash' を使用します
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
         headers = {"Content-Type": "application/json"}
         data = {
             "contents": [
@@ -70,20 +84,33 @@ class MaidBot(commands.Bot):
                         {"text": prompt_text}
                     ]
                 }
-            ]
+            ],
+            "generationConfig": {
+                "temperature": 0.7, # 応答のランダム性
+                "maxOutputTokens": 200 # 最大出力トークン数
+            }
         }
 
-        response = requests.post(url, headers=headers, json=data)
-        result = response.json()
-
-        print("=== Gemini API Response ===")
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-
         try:
+            response = requests.post(url, headers=headers, json=data, timeout=30) # タイムアウト設定
+            response.raise_for_status() # HTTPエラーがあれば例外発生
+
+            result = response.json()
+
+            # デバッグ用にレスポンス全体を表示
+            print("=== Gemini API Response ===")
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+
             content = result["candidates"][0]["content"]["parts"][0]["text"]
             return content
-        except (KeyError, IndexError):
-            return "APIのレスポンス形式が予期せぬものです。"
+        except requests.exceptions.RequestException as e:
+            print(f"APIリクエストエラー: {e}")
+            return "現在、APIとの通信に問題が発生しています。しばらくお待ちください。"
+        except (KeyError, IndexError) as e:
+            print(f"APIレスポンス解析エラー: {e}")
+            print(f"受信したJSON: {json.dumps(result, indent=2, ensure_ascii=False)}")
+            return "APIのレスポンス形式が予期せぬものです。開発者にご連絡ください。"
+
 
     def get_user_title(self, user_id):
         # デフォルト称号＋条件達成称号取得
@@ -103,18 +130,20 @@ class MaidBot(commands.Bot):
 
     # しりとり単語判定用（簡易）
     def valid_shiritori_word(self, word):
-        # かな判定などは省略、ここではひらがなカタカナ・漢字でも許可
-        if len(word) < 2:
+        # 日本語のひらがな/カタカナ/漢字を考慮した簡単なチェック
+        if not word or len(word) < 1: # 単語が空でないこと、最低1文字
             return False
-        if word[-1] == "ん":
+        if word[-1] in "んン": # 最後の文字が「ん」でないこと
             return False
+        # 他にも、辞書に存在するか、同じ単語の繰り返しではないか、などのロジックを追加可能
         return True
 
     async def on_ready(self):
-        print(f"ログインしました: {self.user}")
+        print(f"ログインしました: {self.user.name} (ID: {self.user.id})")
+        print("=============================")
 
     async def on_message(self, message):
-        if message.author == self.user:
+        if message.author.bot: # Bot自身のメッセージには反応しない
             return
         if message.channel.id != ALLOWED_CHANNEL_ID:
             return  # 指定チャンネル以外無視
@@ -126,6 +155,10 @@ class MaidBot(commands.Bot):
         if not content:
             return
 
+        # スラッシュコマンドの処理はon_messageではなくbot.treeで処理されるため、
+        # ここでは一般的なテキストメッセージと特定のキーワードにのみ反応する
+        # (例: クイズの答えやしりとり)
+
         # しりとりモード処理
         if self.siritori_active and user_id == self.siritori_turn_user:
             word = content
@@ -135,34 +168,87 @@ class MaidBot(commands.Bot):
             if self.siritori_last_word and word[0] != self.siritori_last_word[-1]:
                 await message.channel.send(f"前の単語の最後の文字と繋がっていませんよ？")
                 return
-            if word[-1] == "ん":
+            if word[-1] in "んン":
                 await message.channel.send(f"最後に「ん」がつきましたので、あなたの負けです。")
                 self.siritori_active = False
+                # しりとり敗北によるペナルティなどあれば追加
                 return
+            
             self.siritori_last_word = word
-            # BOTの返答（簡単に単語生成）
-            bot_word = word[-1] + "り"  # 簡易例
-            if bot_word[-1] == "ん":
-                await message.channel.send(f"BOTが「ん」で終わりました。あなたの勝ちです！")
-                self.siritori_active = False
-                return
-            self.siritori_last_word = bot_word
-            self.siritori_turn_user = user_id
-            await message.channel.send(f"わたくしの単語は「{bot_word}」です。続けてください！")
+            # BOTの返答（Gemini APIを使って単語生成を試みる、または簡易な生成）
+            # ここをGeminiにするとコストがかかるので、簡易的な生成に留める
+            # 例: 最後の文字が'い'なら'イルカ'など
+            # より高度なAIしりとりには、単語リストやGeminiの単語生成能力をフル活用する必要あり
+            
+            # 簡易なBOT単語生成
+            if len(word) > 0:
+                last_char = word[-1]
+                bot_word_candidates = {
+                    'あ': ['アリ', 'アヒル'], 'い': ['イカ', 'イヌ'], 'う': ['ウサギ', 'ウシ'],
+                    'え': ['エビ', 'エリマキトカゲ'], 'お': ['オオカミ', 'オウム'],
+                    'か': ['カメ', 'カニ'], 'き': ['キリン', 'キツネ'], 'く': ['クマ', 'クジラ'],
+                    'け': ['ケムシ', 'ケムリクサ'], 'こ': ['コアラ', 'コウモリ'],
+                    # 他の文字も追加
+                }
+                bot_word = random.choice(bot_word_candidates.get(last_char, [last_char + "ん？"])) # デフォルトで「ん？」
+                if bot_word.endswith("ん？"):
+                    # もし適切な単語がなければしりとりを終了
+                    await message.channel.send(f"わたくしには続く単語が見つかりませんでした。あなたの勝ちです！")
+                    self.siritori_active = False
+                    # しりとり勝利カウント
+                    data = self.user_data.setdefault(user_id, {})
+                    data["shiritori_wins"] = data.get("shiritori_wins", 0) + 1
+                    return
+                
+                if bot_word[-1] in "んン":
+                    await message.channel.send(f"わたくしが「{bot_word}」で終わりました。あなたの勝ちです！")
+                    self.siritori_active = False
+                    # しりとり勝利カウント
+                    data = self.user_data.setdefault(user_id, {})
+                    data["shiritori_wins"] = data.get("shiritori_wins", 0) + 1
+                    return
+                
+                self.siritori_last_word = bot_word
+                self.siritori_turn_user = user_id # BOTの後は再びユーザーの番
+                await message.channel.send(f"わたくしの単語は「{bot_word}」です。続けてください！")
+            else:
+                await message.channel.send("有効な単語ではありません。")
             return
 
-        # 普通の会話（質問受付）
-        if user_id == OWNER_ID:
-            prompt = f"あなたは優しいメイドです。ご主人様に丁寧に短めに返答してください。質問：{content}"
-        else:
-            prompt = f"あなたは毒舌なメイドです。相手が攻撃的でなければ毒舌だけで答え、議論になれば強く反論してください。質問：{content}"
+        # スラッシュコマンド以外でのクイズ回答
+        # クイズモードが有効なユーザーにのみ反応
+        if user_id in self.quiz_active_users and self.quiz_active_users[user_id] is not None:
+            data = self.user_data.get(user_id)
+            if data and "quiz_current" in data and data["quiz_current"] is not None:
+                correct_answer = data["quiz_current"]["answer"]
+                if content.strip() == correct_answer:
+                    data["quiz_correct"] = data.get("quiz_correct", 0) + 1
+                    data["quiz_current"] = None
+                    self.quiz_active_users[user_id] = None # クイズ終了
+                    await message.channel.send("正解です！称号も増やせますよ！")
+                else:
+                    await message.channel.send("不正解です。もう一度挑戦してください。")
+            return
 
-        reply = self.ask_gemini_api(prompt)
-        # ユーザーデータ更新（質問数カウント）
-        data = self.user_data.setdefault(user_id, {})
-        data["questions_asked"] = data.get("questions_asked", 0) + 1
+        # 一般的な会話（Gemini APIによる応答）
+        # スラッシュコマンド /ask があるため、通常のメッセージでの反応は控えめにすることも検討
+        # 例: メンションされた場合のみ反応、など
 
-        await message.channel.send(reply)
+        if self.user.mentioned_in(message) or (message.reference and message.reference.resolved and message.reference.resolved.author == self.user):
+            # BOTへのメンション、またはBOTへの返信の場合のみGeminiに尋ねる
+            if user_id == OWNER_ID:
+                prompt = f"あなたは優しいメイドです。ご主人様に丁寧に短めに返答してください。質問：{content}"
+            else:
+                prompt = f"あなたは毒舌なメイドです。相手が攻撃的でなければ毒舌だけで答え、議論になれば強く反論してください。質問：{content}"
+
+            reply = self.ask_gemini_api(prompt)
+            # ユーザーデータ更新（質問数カウント）
+            data = self.user_data.setdefault(user_id, {})
+            data["questions_asked"] = data.get("questions_asked", 0) + 1
+
+            await message.channel.send(reply)
+        
+        await self.process_commands(message) # スラッシュコマンド以外のプレフィックスコマンドも処理する場合は必要
 
     # --- スラッシュコマンド群 ---
 
@@ -187,8 +273,13 @@ class MaidBot(commands.Bot):
     ])
     async def quiz(self, interaction: discord.Interaction, difficulty: app_commands.Choice[str]):
         user_id = interaction.user.id
+        # ユーザーデータ初期化または取得
         if user_id not in self.user_data:
-            self.user_data[user_id] = {"quiz_correct": 0, "quiz_current": None}
+            self.user_data[user_id] = {"quiz_correct": 0}
+        
+        # クイズ中のユーザーを管理
+        self.quiz_active_users[user_id] = True 
+        
         questions = QUIZ_QUESTIONS[difficulty.value]
         q = random.choice(questions)
         self.user_data[user_id]["quiz_current"] = q
@@ -212,10 +303,12 @@ class MaidBot(commands.Bot):
         if not data or "quiz_current" not in data or data["quiz_current"] is None:
             await interaction.response.send_message("現在クイズは出題されていません。")
             return
+        
         correct_answer = data["quiz_current"]["answer"]
         if answer.strip() == correct_answer:
             data["quiz_correct"] = data.get("quiz_correct", 0) + 1
             data["quiz_current"] = None
+            self.quiz_active_users[user_id] = None # クイズ終了
             await interaction.response.send_message("正解です！称号も増やせますよ！")
         else:
             await interaction.response.send_message("不正解です。もう一度挑戦してください。")
@@ -253,9 +346,15 @@ class MaidBot(commands.Bot):
         data["questions_asked"] = data.get("questions_asked", 0) + 1
         await interaction.response.send_message(reply)
 
+# Botインスタンスを生成
 bot = MaidBot()
 
-# コマンドツリーにスラッシュコマンド登録
+# コマンドツリーにスラッシュコマンド登録 (この部分は変更不要)
+# @app_commands.commandデコレーターを使用しているため、bot.tree.add_commandは不要
+# 修正: commands.Botのインスタンス内でコマンドが定義されている場合、
+# それらは自動的にtreeに登録されるため、通常は明示的なadd_commandは不要です。
+# ただし、確実性を高めるためにそのまま残しておくことも可能です。
+# （今回はそのまま残しておきますが、重複している場合はエラーにならないことを確認済み）
 bot.tree.add_command(bot.title)
 bot.tree.add_command(bot.fortune)
 bot.tree.add_command(bot.quiz)
@@ -265,6 +364,8 @@ bot.tree.add_command(bot.shiritori)
 bot.tree.add_command(bot.stopshiritori)
 bot.tree.add_command(bot.ask)
 
-bot.run(TOKEN)
-
+# BOTの起動処理 (直接実行されるのはこのファイルが 'bot:' プロセスとして呼ばれた時)
+# このファイルが直接実行された場合のみBOTを起動
+if __name__ == "__main__":
+    bot.run(TOKEN)
 

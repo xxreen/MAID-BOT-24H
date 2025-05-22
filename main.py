@@ -6,10 +6,6 @@ import asyncio
 import time
 from flask import Flask
 from threading import Thread
-import logging
-
-# ログ設定
-logging.basicConfig(level=logging.INFO)
 
 # --- Discord & Gemini設定 ---
 OWNER_ID = "1016316997086216222"
@@ -19,7 +15,7 @@ DISCORD_TOKEN = os.getenv("TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-pro")
+model = genai.GenerativeModel("models/gemini-1.5-flash")
 
 # --- Flask Webサーバー ---
 app = Flask('')
@@ -29,7 +25,7 @@ def home():
     return "Bot is alive!"
 
 def run_web():
-    port = int(os.environ.get("PORT", 10000))  # Renderで使用されるポート
+    port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
@@ -109,10 +105,10 @@ async def generate_response(message_content: str, author_id: str, author_name: s
         )
 
     try:
-        response = await asyncio.to_thread(model.generate_content, prompt)
+        response = await asyncio.to_thread(model.generate_content, [prompt])
         return response.text.strip()
     except Exception as e:
-        logging.error(f"Geminiエラー: {e}")
+        print("Geminiエラー:", e)
         return "ちょっとエラー。もう一回頼むわ。"
 
 # --- メッセージイベント ---
@@ -131,8 +127,8 @@ async def on_message(message):
 # --- 起動イベント ---
 @bot.event
 async def on_ready():
-    logging.info(f"ログイン成功: {bot.user}")
-    logging.info("起動しました！")
+    print(f"ログイン成功: {bot.user}")
+    print("起動しました！")
 
 # --- メイン起動 ---
 if __name__ == "__main__":

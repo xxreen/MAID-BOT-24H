@@ -4,20 +4,35 @@ import google.generativeai as genai
 import os
 import asyncio
 import time
+from flask import Flask
+from threading import Thread
 
-# --- あなたのDiscord IDとBotが応答するチャンネルIDを設定 ---
+# --- Discord & Gemini設定 ---
 OWNER_ID = "1016316997086216222"
 TARGET_CHANNEL_ID = 1374589955996778577
 
-# --- トークン＆APIキー ---
 DISCORD_TOKEN = os.getenv("TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# --- Gemini API設定 ---
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-pro")
 
-# --- Bot設定 ---
+# --- Flask Webサーバー ---
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot is alive!"
+
+def run_web():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run_web)
+    t.start()
+
+# --- Discord Bot設定 ---
 intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
@@ -37,7 +52,7 @@ MODES = {
     "roast": "超絶煽りモード",
 }
 
-# --- モード切替 ---
+# --- モード切替コマンド ---
 @bot.command()
 async def mode(ctx, *, mode_name=None):
     user_id = str(ctx.author.id)
@@ -48,7 +63,7 @@ async def mode(ctx, *, mode_name=None):
         current = MODES.get(user_modes.get(user_id, "default"))
         await ctx.send(f"現在のモードは『{current}』です。\n利用可能なモード: {', '.join(MODES.values())}")
 
-# --- 応答生成 ---
+# --- 応答生成関数 ---
 async def generate_response(message_content: str, author_id: str, author_name: str) -> str:
     now = time.time()
     if author_id in user_last_request and now - user_last_request[author_id] < COOLDOWN_SECONDS:
@@ -58,10 +73,9 @@ async def generate_response(message_content: str, author_id: str, author_name: s
 
     history = user_memory.get(author_id, [])
     history.append(f"{author_name}: {message_content}")
-    user_memory[author_id] = history[-10:]  # 直近10件だけ保存
+    user_memory[author_id] = history[-10:]
 
     memory_text = "\n".join(history)
-
     mode = user_modes.get(author_id, "default")
 
     if author_id == OWNER_ID:
@@ -110,12 +124,13 @@ async def on_message(message):
         reply = await generate_response(content, str(message.author.id), message.author.name)
         await message.channel.send(reply)
 
-# --- 起動ログ ---
+# --- 起動イベント ---
 @bot.event
 async def on_ready():
     print(f"ログイン成功: {bot.user}")
     print("起動しました！")
 
-# --- 起動 ---
+# --- メイン起動 ---
 if __name__ == "__main__":
+    keep_alive()
     bot.run(DISCORD_TOKEN)

@@ -6,6 +6,10 @@ import asyncio
 import time
 from flask import Flask
 from threading import Thread
+import logging
+
+# ログ設定
+logging.basicConfig(level=logging.INFO)
 
 # --- Discord & Gemini設定 ---
 OWNER_ID = "1016316997086216222"
@@ -25,7 +29,7 @@ def home():
     return "Bot is alive!"
 
 def run_web():
-    port = int(os.environ.get("PORT", 8080))
+    port = int(os.environ.get("PORT", 10000))  # Renderで使用されるポート
     app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
@@ -105,10 +109,10 @@ async def generate_response(message_content: str, author_id: str, author_name: s
         )
 
     try:
-        response = await asyncio.to_thread(model.generate_content, [prompt])
+        response = await asyncio.to_thread(model.generate_content, prompt)
         return response.text.strip()
     except Exception as e:
-        print("Geminiエラー:", e)
+        logging.error(f"Geminiエラー: {e}")
         return "ちょっとエラー。もう一回頼むわ。"
 
 # --- メッセージイベント ---
@@ -127,8 +131,8 @@ async def on_message(message):
 # --- 起動イベント ---
 @bot.event
 async def on_ready():
-    print(f"ログイン成功: {bot.user}")
-    print("起動しました！")
+    logging.info(f"ログイン成功: {bot.user}")
+    logging.info("起動しました！")
 
 # --- メイン起動 ---
 if __name__ == "__main__":

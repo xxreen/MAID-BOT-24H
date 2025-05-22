@@ -15,7 +15,7 @@ DISCORD_TOKEN = os.getenv("TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash")  # 無料でOK！
+model = genai.GenerativeModel("gemini-1.5-flash")  # ← 修正済み
 
 # --- Flask Webサーバー ---
 app = Flask('')

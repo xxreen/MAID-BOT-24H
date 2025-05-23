@@ -41,7 +41,7 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
-# --- 禁止用語リスト（今はチェック無効化） ---
+# --- 禁止用語リスト ---
 BANNED_WORDS = ["クソ", "ばか", "死ね", "氏ね", "殺す"]
 
 # --- モード設定 ---
@@ -54,6 +54,112 @@ MODES = {
 }
 current_mode = "default"
 conversation_history = {}
+
+# --- クイズ管理用変数 ---
+active_quiz = None
+quiz_lock = asyncio.Lock()
+
+# --- クイズ問題データ ---
+QUIZ_QUESTIONS = {
+    "アニメ": {
+        "easy": [
+            {"q": "ドラえもんの秘密道具で『どこでもドア』の用途は？", "a": "どこへでも行けるドア"},
+            {"q": "ナルトの忍者の里はどこ？", "a": "木ノ葉隠れの里"},
+        ],
+        "normal": [
+            {"q": "進撃の巨人で主人公の名前は？", "a": "エレン・イェーガー"},
+            {"q": "ワンピースの麦わらの一味の船長は？", "a": "モンキー・D・ルフィ"},
+        ],
+        "hard": [
+            {"q": "コードギアスの主人公の名前は？", "a": "ルルーシュ・ランペルージ"},
+            {"q": "シュタインズ・ゲートのタイムリープ装置の名前は？", "a": "電話レンジ"},
+        ],
+    },
+    "国語": {
+        "easy": [
+            {"q": "『春』という漢字は何画でしょう？", "a": "9"},
+            {"q": "『ありがとう』の意味は？", "a": "感謝"},
+        ],
+        "normal": [
+            {"q": "『花鳥風月』の意味は？", "a": "自然の美しさ"},
+            {"q": "『以心伝心』とは何を意味する？", "a": "言葉を使わず心が通じ合うこと"},
+        ],
+        "hard": [
+            {"q": "『枕草子』の作者は？", "a": "清少納言"},
+            {"q": "『徒然草』を書いた人物は？", "a": "兼好法師"},
+        ],
+    },
+    "数学": {
+        "easy": [
+            {"q": "1+1は？", "a": "2"},
+            {"q": "三角形の内角の和は？", "a": "180度"},
+        ],
+        "normal": [
+            {"q": "微分の基本公式の一つを答えよ。", "a": "d/dx x^n = n x^(n-1)"},
+            {"q": "円周率の近似値は？", "a": "3.14"},
+        ],
+        "hard": [
+            {"q": "フェルマーの最終定理を簡単に説明せよ。", "a": "n>2の自然数でa^n + b^n = c^nの整数解はない"},
+            {"q": "リーマン予想は何に関する問題？", "a": "ゼータ関数の零点"},
+        ],
+    },
+    "社会": {
+        "easy": [
+            {"q": "日本の首都は？", "a": "東京"},
+            {"q": "日本の通貨単位は？", "a": "円"},
+        ],
+        "normal": [
+            {"q": "日本の国会は何院制？", "a": "二院制"},
+            {"q": "日本の三権分立を答えよ。", "a": "立法、司法、行政"},
+        ],
+        "hard": [
+            {"q": "明治維新は何年に始まった？", "a": "1868"},
+            {"q": "戦後の日本国憲法の施行日は？", "a": "1947年5月3日"},
+        ],
+    },
+    "理科": {
+        "easy": [
+            {"q": "水の化学式は？", "a": "H2O"},
+            {"q": "光の速さは約何km/s？", "a": "30万km/s"},
+        ],
+        "normal": [
+            {"q": "原子番号とは何を示す？", "a": "陽子の数"},
+            {"q": "地球の大気の主成分は？", "a": "窒素"},
+        ],
+        "hard": [
+            {"q": "ニュートンの運動の第三法則は？", "a": "作用・反作用の法則"},
+            {"q": "DNAの二重らせん構造を発見した人物は？", "a": "ワトソンとクリック"},
+        ],
+    },
+    "地理": {
+        "easy": [
+            {"q": "日本は何大陸にある？", "a": "アジア"},
+            {"q": "富士山の高さは？", "a": "3776m"},
+        ],
+        "normal": [
+            {"q": "世界で一番大きい砂漠は？", "a": "サハラ砂漠"},
+            {"q": "ナイル川はどの大陸にある？", "a": "アフリカ"},
+        ],
+        "hard": [
+            {"q": "世界の首都で標高が最も高いのは？", "a": "ラパス"},
+            {"q": "ロッキー山脈はどこの国にある？", "a": "アメリカ"},
+        ],
+    },
+    "歴史": {
+        "easy": [
+            {"q": "織田信長はどの時代の人物？", "a": "戦国時代"},
+            {"q": "第二次世界大戦はいつ終わった？", "a": "1945年"},
+        ],
+        "normal": [
+            {"q": "明治維新の中心人物の一人は？", "a": "西郷隆盛"},
+            {"q": "江戸幕府を開いたのは？", "a": "徳川家康"},
+        ],
+        "hard": [
+            {"q": "ペリー来航は何年？", "a": "1853年"},
+            {"q": "関ヶ原の戦いで勝利した大名は？", "a": "徳川家康"},
+        ],
+    },
+}
 
 # --- 天気取得関数 ---
 async def get_weather(city_name: str):
@@ -121,83 +227,100 @@ async def mode_cmd(interaction: discord.Interaction, mode: str):
     else:
         await interaction.response.send_message(f"無効なモードですわ。使えるモード: {', '.join(MODES.keys())}", ephemeral=True)
 
-# --- メッセージ処理 ---
+# --- /quiz コマンド ---
+@tree.command(name="quiz", description="クイズを出題します")
+async def quiz_cmd(interaction: discord.Interaction, genre: str, difficulty: str):
+    if interaction.channel.id != ALLOWED_CHANNEL_ID:
+        await interaction.response.send_message(f"このコマンドは指定チャンネル（ID: {ALLOWED_CHANNEL_ID}）でのみ使えます。", ephemeral=True)
+        return
+
+    genre = genre.strip()
+    difficulty = difficulty.strip()
+
+    if genre not in QUIZ_QUESTIONS:
+        await interaction.response.send_message(f"ジャンルは次の中から選んでください: {', '.join(QUIZ_QUESTIONS.keys())}", ephemeral=True)
+        return
+    if difficulty not in ["easy", "normal", "hard"]:
+        await interaction.response.send_message("難易度は easy, normal, hard のいずれかを指定してください。", ephemeral=True)
+        return
+
+    global active_quiz
+
+    async with quiz_lock:
+        if active_quiz is not None:
+            await interaction.response.send_message("現在他のクイズが進行中です。終了までお待ちください。", ephemeral=True)
+            return
+
+        question_data = random.choice(QUIZ_QUESTIONS[genre][difficulty])
+        active_quiz = {
+            "channel_id": interaction.channel.id,
+            "question": question_data["q"],
+            "answer": question_data["a"],
+            "asker_id": interaction.user.id,
+            "genre": genre,
+            "difficulty": difficulty,
+            "answered_users": set()
+        }
+
+        # チャンネルにメンションつきで出題
+        await interaction.response.send_message(f"クイズを出題します！ジャンル：{genre} 難易度：{difficulty}\n"
+                                                f"{interaction.channel.mention} みんな！答えをDMで送ってね！\n"
+                                                f"問題：{active_quiz['question']}")
+
+# --- DMでの回答受付 ---
 @bot.event
 async def on_message(message):
+    # Bot自身のメッセージは無視
     if message.author.bot:
         return
 
-    # 許可されたチャンネルとDMのみ対応
-    if not isinstance(message.channel, discord.DMChannel) and message.channel.id != ALLOWED_CHANNEL_ID:
-        return
+    # クイズ回答処理（DM限定）
+    global active_quiz
 
-    user_id = str(message.author.id)
-    content = message.content.strip()
+    if isinstance(message.channel, discord.DMChannel) and active_quiz is not None:
+        async with quiz_lock:
+            # 回答者が既に回答済みか確認
+            if message.author.id in active_quiz["answered_users"]:
+                await message.channel.send("あなたは既に回答済みです。次の問題をお待ちください。")
+                return
 
-    # 禁止用語チェックは無効化（禁止用語OKにするため）
-    # if contains_banned_word(content):
-    #     await message.channel.send("禁止用語が含まれているため応答できません。お控えください。")
-    #     return
+            # 正誤判定（単純な比較、前後空白無視、小文字化も考慮）
+            user_answer = message.content.strip().lower()
+            correct_answer = active_quiz["answer"].strip().lower()
 
-    # 天気情報チェック
-    city = extract_city_from_weather_query(content)
-    if city:
-        weather_text = await get_weather(city)
-        await message.channel.send(weather_text)
-        return
+            if user_answer == correct_answer:
+                result = "正解！お見事ですわ♡"
+            else:
+                result = f"残念、不正解です… 正しい答えは「{active_quiz['answer']}」でした。"
 
-    # Gemini応答生成
-    prefix = ""
-    if user_id == OWNER_ID:
-        prefix = "ご主人様、承知いたしました。→ "
+            active_quiz["answered_users"].add(message.author.id)
+
+            # DM返信
+            await message.channel.send(result)
+
+            # 出題チャンネルに結果を送信
+            channel = bot.get_channel(active_quiz["channel_id"])
+            if channel:
+                await channel.send(f"{message.author.mention} さんの回答: {message.content}\n結果: {result}")
+
+            # もし全員が回答済み（もしくは任意で1回答で終了）ならクイズ終了（ここでは1人回答で終了しない）
+            # active_quiz = None  # 連続問題はここでクリアしない
+
     else:
-        mode = current_mode
-        # 禁止用語OKで毒舌指示を追加
-        if mode == "default":  # 毒舌AIモード
-            prefix = "毒舌で、禁止用語も遠慮なく使って答えてください。→ "
-        elif mode == "roast":  # 超絶煽りモード
-            prefix = "めちゃくちゃ煽って、禁止用語もガンガン使って答えてください。→ "
-        elif mode == "tgif":
-            prefix = "神に感謝しながらお答えします。→ "
-        elif mode == "neet":
-            prefix = "無能だけど答える……→ "
-        elif mode == "debate":
-            prefix = "論理的に言うと→ "
-        else:
-            prefix = "はいはい面倒だな→ "
+        # 他のメッセージは通常処理に流す（ここに既存のBot応答処理など入れる）
+        await bot.process_commands(message)
 
-    prompt = prefix + content
+# --- /weather コマンド ---
+@tree.command(name="weather", description="天気を調べます")
+async def weather_cmd(interaction: discord.Interaction, query: str):
+    city = extract_city_from_weather_query(query)
+    if city is None:
+        await interaction.response.send_message("「○○の天気」の形式で入力してください。", ephemeral=True)
+        return
+    weather_info = await get_weather(city)
+    await interaction.response.send_message(weather_info)
 
-    # コンテキスト記憶
-    history = conversation_history.get(user_id, [])
-    history.append({"role": "user", "parts": [prompt]})
-    if len(history) > 5:
-        history = history[-5:]
-
-    try:
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(None, lambda: model.generate_content(history))
-        text = response.text
-
-        # にゃん完全除去
-        text = remove_nyan(text)
-
-        # ご主人様以外は短くする
-        if user_id != OWNER_ID:
-            text = shorten_text(text, max_len=150)
-
-        if len(text) > 2000:
-            text = text[:1997] + "..."
-
-        await message.channel.send(text)
-        conversation_history[user_id] = history
-
-    except Exception:
-        traceback.print_exc()
-        await message.channel.send("応答に失敗しましたわ、ごめんなさい。")
-
-    await bot.process_commands(message)
-
-# --- 実行 ---
-keep_alive()
-bot.run(TOKEN)
+# --- Bot起動 ---
+if __name__ == "__main__":
+    keep_alive()
+    bot.run(TOKEN)

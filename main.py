@@ -14,7 +14,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OWNER_ID = "1016316997086216222"
 
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-pro")
+model = genai.GenerativeModel("models/gemini-1.5-flash")
 
 app = Flask(__name__)
 

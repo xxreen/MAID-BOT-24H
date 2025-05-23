@@ -7,11 +7,12 @@ from threading import Thread
 import google.generativeai as genai
 import asyncio
 import traceback
-import datetime
+import requests
 
 # --- 設定 ---
 TOKEN = os.getenv("TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 OWNER_ID = "1016316997086216222"
 ALLOWED_CHANNEL_ID = 1374589955996778577
 WELCOME_CHANNEL_ID = 1370406946812854404
@@ -66,6 +67,20 @@ QUIZ_DATA = {
     }
 }
 
+# --- 天気取得関数 ---
+def get_weather(city):
+    url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&lang=ja&units=metric"
+    try:
+        response = requests.get(url)
+        data = response.json()
+        if data.get("cod") != 200:
+            return f"天気情報が取得できませんでした：{data.get('message', '不明なエラー')}"
+        weather = data["weather"][0]["description"]
+        temp = data["main"]["temp"]
+        return f"{city}の現在の天気は「{weather}」、気温は{temp}℃ですわ♪"
+    except Exception as e:
+        return f"天気情報取得中にエラーが発生しました：{e}"
+
 # --- 起動時 ---
 @bot.event
 async def on_ready():
@@ -107,6 +122,14 @@ async def quiz_cmd(interaction: discord.Interaction, genre: str, difficulty: str
     await interaction.user.send(f"問題ですわ♪: {quiz['question']}\n※このDMに答えを返信してね♡")
     await interaction.response.send_message("クイズをDMで送信しましたわ♪", ephemeral=True)
 
+# --- !weather コマンド ---
+@bot.command(name="weather")
+async def weather(ctx, *, city: str):
+    if ctx.channel.id != ALLOWED_CHANNEL_ID:
+        return
+    result = get_weather(city)
+    await ctx.send(result)
+
 # --- メッセージ処理 ---
 @bot.event
 async def on_message(message):
@@ -133,25 +156,14 @@ async def on_message(message):
         return
 
     # Gemini応答生成
-    prefix = ""
-    if user_id == OWNER_ID:
-        prefix = "ご主人様、承知いたしました。→ "
-    else:
-        mode = current_mode
-        if mode == "tgif":
-            prefix = "神に感謝しながらお答えいたします。→ "
-        elif mode == "neet":
-            prefix = "無能ですが一応お答えします……。→ "
-        elif mode == "debate":
-            prefix = "論理的に解説いたします。→ "
-        elif mode == "roast":
-            prefix = "馬鹿にも分かるように答えてやるよ。→ "
-        else:
-            prefix = "はいはい、また面倒な質問ね。→ "
+    prefix = "ご主人様、承知いたしました。→ " if user_id == OWNER_ID else {
+        "tgif": "神に感謝しながらお答えいたします。→ ",
+        "neet": "無能ですが一応お答えします……。→ ",
+        "debate": "論理的に解説いたします。→ ",
+        "roast": "馬鹿にも分かるように答えてやるよ。→ ",
+    }.get(current_mode, "はいはい、また面倒な質問ね。→ ")
 
     prompt = prefix + message.content
-
-    # コンテキスト記憶
     history = conversation_history.get(user_id, [])
     history.append({"role": "user", "parts": [prompt]})
     if len(history) > 5:
@@ -161,13 +173,6 @@ async def on_message(message):
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(None, lambda: model.generate_content(history))
         text = response.text
-
-        # 天気への対応
-        lowered = message.content.lower()
-        if "日本の天気" in lowered or "日本の天気は" in lowered:
-            text = "日本の代表として東京の天気をお伝えします。\n" + text.split("\n")[0]
-        elif "フィリピンの天気" in lowered or "フィリピンの天気は" in lowered:
-            text = "フィリピンの代表としてセブの天気をお伝えします。\n" + text.split("\n")[0]
 
         text = text.replace("にゃん♡", "").replace("にゃん", "")
         if len(text) > 2000:

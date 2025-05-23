@@ -4,6 +4,7 @@ import google.generativeai as genai
 import os
 import asyncio
 import time
+import random
 from flask import Flask
 from threading import Thread
 
@@ -64,6 +65,56 @@ async def mode(ctx, *, mode_name=None):
         current = MODES.get(user_modes.get(user_id, "default"))
         await ctx.send(f"現在のモードは『{current}』です。\n利用可能なモード: {', '.join(MODES.values())}")
 
+# --- クイズデータ ---
+quiz_data = {
+    "アニメ": {
+        "簡単": ["『ドラゴンボール』の主人公の名前は？|孫悟空"],
+        "普通": ["『進撃の巨人』で巨人化できる主人公の名前は？|エレン"],
+        "難しい": ["『涼宮ハルヒの憂鬱』のヒロインのフルネームは？|涼宮ハルヒ"]
+    },
+    "数学": {
+        "簡単": ["1 + 1 = ?|2"],
+        "普通": ["√9 = ?|3"],
+        "難しい": ["微分: d/dx (x^2) = ?|2x"]
+    },
+    "国語": {
+        "簡単": ["「犬も歩けば棒に当たる」はどんな意味？|何かをすると思わぬ災難や利益がある"],
+        "普通": ["『吾輩は猫である』を書いたのは誰？|夏目漱石"],
+        "難しい": ["「花鳥風月」とは何を意味する？|自然の美しさや風情"]
+    },
+    "理科": {
+        "簡単": ["水は何度で沸騰する？（摂氏）|100"],
+        "普通": ["地球の衛星の名前は？|月"],
+        "難しい": ["光の三原色は？|赤・緑・青"]
+    },
+    "社会": {
+        "簡単": ["日本の首都は？|東京"],
+        "普通": ["アメリカの初代大統領は？|ジョージ・ワシントン"],
+        "難しい": ["明治維新が始まった年は？|1868"]
+    }
+}
+
+# --- クイズコマンド ---
+@bot.slash_command(name="quiz", description="ジャンルと難易度を選んでクイズに挑戦！")
+async def quiz(ctx,
+               subject: discord.Option(str, "ジャンルを選んで", choices=list(quiz_data.keys())),
+               level: discord.Option(str, "難易度を選んで", choices=["簡単", "普通", "難しい"])):
+    question_entry = random.choice(quiz_data[subject][level])
+    question, answer = question_entry.split("|")
+    await ctx.respond(f"【{subject} - {level}】\n{question}")
+
+    def check(m):
+        return m.channel == ctx.channel and m.author == ctx.author
+
+    try:
+        response = await bot.wait_for("message", check=check, timeout=20.0)
+        if response.content.strip() == answer:
+            await ctx.send("正解！🎉")
+        else:
+            await ctx.send(f"不正解… 正解は「{answer}」だったよ。")
+    except asyncio.TimeoutError:
+        await ctx.send(f"時間切れ！正解は「{answer}」だったよ。")
+
 # --- 応答生成関数 ---
 async def generate_response(message_content: str, author_id: str, author_name: str) -> str:
     now = time.time()
@@ -86,22 +137,22 @@ async def generate_response(message_content: str, author_id: str, author_name: s
         )
     elif mode == "neet":
         prompt = (
-            "あなたは自分をニートと自覚している自虐系毒舌AIです。返答は皮肉混じりで簡潔にしてください。\n"
+            "あなたは自分をニートと自覚している自虐系毒舌AIです。\n"
             f"会話履歴:\n{memory_text}\n\n相手: {message_content}\nあなた:"
         )
     elif mode == "debate":
         prompt = (
-            "あなたは論破モードの毒舌AIです。相手の発言の矛盾点や過去の発言を利用して痛いところを突いてください。\n"
+            "あなたは論破モードの毒舌AIです。\n"
             f"会話履歴:\n{memory_text}\n\n相手: {message_content}\nあなた:"
         )
     elif mode == "roast":
         prompt = (
-            "あなたは超絶煽りモードの毒舌AIです。相手を論理と皮肉で叩きのめしてください。ただし暴力的脅迫やBANされる内容は禁止です。\n"
+            "あなたは超絶煽りモードの毒舌AIです。\n"
             f"会話履歴:\n{memory_text}\n\n相手: {message_content}\nあなた:"
         )
     elif mode == "tgif":
         prompt = (
-            "あなたは神聖なるAIで、あらゆる存在に感謝を捧げ、神を崇拝しています。返答は敬虔で神聖な口調にしてください。\n"
+            "あなたは神聖なるAIで、あらゆる存在に感謝を捧げ、神を崇拝しています。\n"
             f"会話履歴:\n{memory_text}\n\n民: {message_content}\nあなた:"
         )
     else:

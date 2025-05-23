@@ -1,6 +1,6 @@
 import discord
-from discord.ext import tasks
-from discord import option
+from discord.ext import commands
+from discord.commands import Option, SlashCommandGroup
 import google.generativeai as genai
 import os
 import asyncio
@@ -36,10 +36,12 @@ def keep_alive():
 
 # --- Discord Bot設定 ---
 intents = discord.Intents.default()
+intents.messages = True
 intents.message_content = True
+
 bot = discord.Bot(intents=intents)
 
-# --- クールダウン & メモリ ---
+# --- 会話履歴 & モード管理 ---
 user_last_request = {}
 user_memory = {}
 user_modes = {}
@@ -54,12 +56,61 @@ MODES = {
 }
 
 # --- モード切替コマンド ---
-@bot.slash_command(name="mode", description="モードを切り替えます")
-@option("mode_name", description="変更するモードを選択", choices=list(MODES.keys()))
-async def change_mode(ctx, mode_name: str):
+@bot.slash_command(name="mode", description="Botの返答モードを切り替える")
+async def mode(ctx, mode_name: Option(str, "モード名", choices=list(MODES.keys()))):
     user_id = str(ctx.author.id)
     user_modes[user_id] = mode_name
     await ctx.respond(f"モードを『{MODES[mode_name]}』に切り替えました。")
+
+# --- クイズ問題集 ---
+QUIZ = {
+    "アニメ": {
+        "簡単": [("ドラゴンボールの主人公は？", "孫悟空")],
+        "普通": [("『進撃の巨人』で壁の名前を1つ答えてください。", "ウォール・マリア")],
+        "難しい": [("『コードギアス』でルルーシュの仮面名は？", "ゼロ")],
+    },
+    "数学": {
+        "簡単": [("1+1は？", "2")],
+        "普通": [("三角形の内角の和は？", "180")],
+        "難しい": [("微分の記号は？", "d")],
+    },
+    "国語": {
+        "簡単": [("「犬も歩けば…」の続きは？", "棒に当たる")],
+        "普通": [("枕草子を書いた人物は？", "清少納言")],
+        "難しい": [("「徒然草」の作者は？", "吉田兼好")],
+    },
+    "理科": {
+        "簡単": [("水の化学式は？", "H2O")],
+        "普通": [("酸素の元素記号は？", "O")],
+        "難しい": [("ニュートンの運動法則は何法則？", "3")],
+    },
+    "社会": {
+        "簡単": [("日本の首都は？", "東京")],
+        "普通": [("明治維新が起きたのは何年？", "1868")],
+        "難しい": [("大政奉還を行った将軍は？", "徳川慶喜")],
+    },
+}
+
+@bot.slash_command(name="quiz", description="ジャンルと難易度を選んでクイズに挑戦！")
+async def quiz(
+    ctx,
+    genre: Option(str, "ジャンルを選んでください", choices=list(QUIZ.keys())),
+    level: Option(str, "難易度を選んでください", choices=["簡単", "普通", "難しい"]),
+):
+    question, answer = random.choice(QUIZ[genre][level])
+    await ctx.respond(f"【{genre} - {level}】\n問題: {question}")
+
+    def check(m):
+        return m.author == ctx.author and m.channel == ctx.channel
+
+    try:
+        msg = await bot.wait_for("message", timeout=30.0, check=check)
+        if answer in msg.content:
+            await ctx.send("正解！🎉")
+        else:
+            await ctx.send(f"残念！正解は「{answer}」でした。")
+    except asyncio.TimeoutError:
+        await ctx.send("時間切れ！⏰")
 
 # --- 応答生成関数 ---
 async def generate_response(message_content: str, author_id: str, author_name: str) -> str:
@@ -68,20 +119,22 @@ async def generate_response(message_content: str, author_id: str, author_name: s
         return "ちょっと待ちな。クールダウン中だよ。"
 
     user_last_request[author_id] = now
+
     history = user_memory.get(author_id, [])
     history.append(f"{author_name}: {message_content}")
     user_memory[author_id] = history[-10:]
+
     memory_text = "\n".join(history)
     mode = user_modes.get(author_id, "default")
 
     if author_id == OWNER_ID:
         prompt = (
-            "あなたは可愛い女の子キャラで、ご主人様に従順です。\n"
+            "あなたは可愛い女の子キャラで、ご主人様に従順です。返答は甘く簡潔にしてください。\n"
             f"会話履歴:\n{memory_text}\n\nご主人様: {message_content}\nあなた:"
         )
     elif mode == "neet":
         prompt = (
-            "あなたはニートで自虐的な毒舌AIです。\n"
+            "あなたは自虐的な毒舌AIです。\n"
             f"会話履歴:\n{memory_text}\n\n相手: {message_content}\nあなた:"
         )
     elif mode == "debate":
@@ -91,17 +144,17 @@ async def generate_response(message_content: str, author_id: str, author_name: s
         )
     elif mode == "roast":
         prompt = (
-            "あなたは超絶煽りモードの毒舌AIです。\n"
+            "あなたは煽りモードの毒舌AIです。\n"
             f"会話履歴:\n{memory_text}\n\n相手: {message_content}\nあなた:"
         )
     elif mode == "tgif":
         prompt = (
-            "あなたは神を崇拝し全てに感謝する神聖なAIです。\n"
+            "あなたは神聖なるAIで、あらゆる存在に感謝し神を崇拝しています。返答は敬虔で神聖な口調にしてください。\n"
             f"会話履歴:\n{memory_text}\n\n民: {message_content}\nあなた:"
         )
     else:
         prompt = (
-            "あなたは毒舌で皮肉な返答をするAIです。\n"
+            "あなたは毒舌で、皮肉混じりの簡潔な返答をするAIです。\n"
             f"会話履歴:\n{memory_text}\n\n相手: {message_content}\nあなた:"
         )
 
@@ -110,7 +163,7 @@ async def generate_response(message_content: str, author_id: str, author_name: s
         return response.text.strip()
     except Exception as e:
         print("Geminiエラー:", e)
-        return "エラーが発生しました。GEMINIが休憩中かもしれません。"
+        return "しっかり返答はするものの…エラーが発生しました。GEMINIが休憩中なのかもね。"
 
 # --- メッセージイベント ---
 @bot.event
@@ -118,45 +171,11 @@ async def on_message(message):
     if message.author.bot or message.channel.id != TARGET_CHANNEL_ID:
         return
 
+    if message.content.startswith("/"):
+        return  # スラッシュコマンドに任せる
+
     reply = await generate_response(message.content, str(message.author.id), message.author.name)
     await message.channel.send(reply)
-
-# --- クイズデータ ---
-quizzes = {
-    "アニメ": {
-        "簡単": [("『ワンピース』で主人公の名前は？", "ルフィ")],
-        "普通": [("『進撃の巨人』で巨人化できる主人公は？", "エレン")],
-        "難しい": [("『涼宮ハルヒの憂鬱』でハルヒが作った団体名は？", "SOS団")],
-    },
-    "数学": {
-        "簡単": [("2 + 2 = ?", "4")],
-        "普通": [("x^2 = 9 の時、xの値は？（正の数）", "3")],
-        "難しい": [("∫ x dx = ?", "0.5x^2 + C")],
-    },
-    "国語": {
-        "簡単": [("『走れメロス』の作者は？", "太宰治")],
-        "普通": [("枕草子を書いた人物は？", "清少納言")],
-        "難しい": [("『源氏物語』の作者は？", "紫式部")],
-    },
-    "理科": {
-        "簡単": [("水の化学式は？", "H2O")],
-        "普通": [("植物が光合成で作る気体は？", "酸素")],
-        "難しい": [("DNAの正式名称は？", "デオキシリボ核酸")],
-    },
-    "社会": {
-        "簡単": [("日本の首都は？", "東京")],
-        "普通": [("明治維新が始まった年は？", "1868")],
-        "難しい": [("フランス革命が始まった年は？", "1789")],
-    },
-}
-
-# --- クイズコマンド ---
-@bot.slash_command(name="quiz", description="ジャンルと難易度を選んでクイズに挑戦！")
-@option("ジャンル", choices=list(quizzes.keys()))
-@option("難易度", choices=["簡単", "普通", "難しい"])
-async def quiz(ctx, ジャンル: str, 難易度: str):
-    q, a = random.choice(quizzes[ジャンル][難易度])
-    await ctx.respond(f"【{ジャンル} / {難易度}】\n{q}\n答えがわかったら教えてね！ 答え: ||{a}||")
 
 # --- 起動イベント ---
 @bot.event

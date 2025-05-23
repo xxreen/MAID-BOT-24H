@@ -28,7 +28,7 @@ def home():
     return "Bot running"
 
 def run():
-    port = int(os.environ.get("PORT", 8080))  # Replitなどに対応
+    port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
 
 def keep_alive():
@@ -52,7 +52,6 @@ MODES = {
 }
 current_mode = "default"
 conversation_history = {}
-
 active_quiz = None
 quiz_lock = asyncio.Lock()
 
@@ -105,21 +104,20 @@ async def get_weather(city_name: str):
             wind_speed = data['wind']['speed']
             return f"{city_name} 天気: {weather_desc} 気温: {temp}℃ 湿度: {humidity}% 風速: {wind_speed}m/s"
 
-# --- 天気クエリ解析 ---
 def extract_city_from_weather_query(text: str):
     match = re.search(r"([^\s]+)の天気", text)
     return match.group(1) if match else None
 
-# --- Bot起動イベント ---
+# --- Bot起動 ---
 @bot.event
 async def on_ready():
     try:
         await tree.sync()
-        print(f"Logged in as {bot.user}")
+        print(f"✅ Logged in as {bot.user}")
     except Exception as e:
         print(f"[ERROR on_ready] {e}")
 
-# --- 新メンバー参加時 ---
+# --- 新メンバー歓迎 ---
 @bot.event
 async def on_member_join(member):
     try:
@@ -129,7 +127,7 @@ async def on_member_join(member):
     except Exception as e:
         print(f"[ERROR on_member_join] {e}")
 
-# --- モード切り替え ---
+# --- モード切替 ---
 @tree.command(name="mode", description="モード切替（主専用）")
 async def mode_cmd(interaction: discord.Interaction, mode: str):
     try:
@@ -145,7 +143,7 @@ async def mode_cmd(interaction: discord.Interaction, mode: str):
     except Exception as e:
         print(f"[ERROR mode_cmd] {e}")
 
-# --- オートコンプリート ---
+# --- クイズの補完 ---
 async def genre_autocomplete(interaction: discord.Interaction, current: str):
     return [discord.app_commands.Choice(name=k, value=k)
             for k in QUIZ_QUESTIONS.keys() if current.lower() in k.lower()][:25]
@@ -202,12 +200,14 @@ async def weather_cmd(interaction: discord.Interaction, query: str):
     except Exception as e:
         print(f"[ERROR weather_cmd] {e}")
 
-# --- メッセージイベント（DMでクイズ判定） ---
+# --- メッセージ処理（通常会話 + クイズDM） ---
 @bot.event
 async def on_message(message):
     try:
         if message.author.bot:
             return
+
+        print(f"[DEBUG] メッセージ受信: {message.content} from {message.author.name}")
 
         global active_quiz
         if isinstance(message.channel, discord.DMChannel) and active_quiz:
@@ -227,7 +227,13 @@ async def on_message(message):
                 if channel:
                     await channel.send(f"{message.author.mention} 回答: {message.content}\n結果: {result}")
         else:
-            await bot.process_commands(message)
+            if message.channel.id == ALLOWED_CHANNEL_ID:
+                prompt = f"{message.author.display_name}「{message.content}」に返答して"
+                response = await model.generate_content_async(prompt)
+                await message.channel.send(response.text)
+
+        await bot.process_commands(message)
+
     except Exception as e:
         print(f"[ERROR on_message] {e}")
 
@@ -235,4 +241,3 @@ async def on_message(message):
 if __name__ == "__main__":
     keep_alive()
     bot.run(TOKEN)
-

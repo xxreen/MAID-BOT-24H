@@ -4,10 +4,18 @@ import os
 import random
 from flask import Flask
 from threading import Thread
+import google.generativeai as genai
+import asyncio
+import traceback
 
 # --- 設定 ---
 TOKEN = os.getenv("TOKEN")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OWNER_ID = "1016316997086216222"
+
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel("gemini-pro")
+
 app = Flask(__name__)
 
 # --- Webサーバー ---
@@ -85,7 +93,7 @@ async def quiz_cmd(interaction: discord.Interaction, genre: str, difficulty: str
     await interaction.user.send(f"問題: {quiz['question']}\n※このDMに答えを返信してね！")
     await interaction.response.send_message("クイズをDMで送信しました。", ephemeral=True)
 
-# --- 解答チェック ---
+# --- メッセージ応答処理（DM・チャンネル共通） ---
 @bot.event
 async def on_message(message):
     if message.author.bot:
@@ -93,18 +101,50 @@ async def on_message(message):
 
     user_id = str(message.author.id)
 
-    # DMでの解答処理
+    # DMでのクイズ解答処理
     if isinstance(message.channel, discord.DMChannel) and user_id in active_quizzes:
         quiz = active_quizzes[user_id]
         answer = quiz["answer"]
         channel = bot.get_channel(quiz["channel_id"])
-        if message.content.strip().lower() == answer.lower():
-            await channel.send(f"{message.author.name} の回答：正解！🎉")
-        else:
-            await channel.send(f"{message.author.name} の回答：不正解！正解は「{answer}」だよ。")
+        if channel:
+            if message.content.strip().lower() == answer.lower():
+                await channel.send(f"{message.author.name} の回答：正解！🎉")
+            else:
+                await channel.send(f"{message.author.name} の回答：不正解！正解は「{answer}」だよ。")
         del active_quizzes[user_id]
+        return
+
+    # Gemini APIで応答
+    mode = user_modes.get(user_id, "default")
+    prefix = ""
+    if user_id == OWNER_ID:
+        prefix = ""
     else:
-        await bot.process_commands(message)
+        if mode == "tgif":
+            prefix = "神に感謝しながら、"
+        elif mode == "neet":
+            prefix = "俺なんかが言うのもあれだけど、"
+        elif mode == "debate":
+            prefix = "論破させてもらうが、"
+        elif mode == "roast":
+            prefix = "お前それマジで言ってる？"
+        elif mode == "default":
+            prefix = "は？バカかお前、"
+
+    prompt = prefix + message.content
+
+    try:
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(None, model.generate_content, prompt)
+        text = response.text
+        if len(text) > 2000:
+            text = text[:1997] + "..."
+        await message.channel.send(text)
+    except Exception:
+        traceback.print_exc()
+        await message.channel.send("応答に失敗したよ。")
+
+    await bot.process_commands(message)
 
 # --- 実行 ---
 keep_alive()

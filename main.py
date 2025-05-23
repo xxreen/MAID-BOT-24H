@@ -12,6 +12,7 @@ import traceback
 TOKEN = os.getenv("TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OWNER_ID = "1016316997086216222"
+ALLOWED_CHANNEL_ID = 1374589955996778577  # 許可されたチャンネルID
 
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("models/gemini-1.5-flash")
@@ -93,10 +94,14 @@ async def quiz_cmd(interaction: discord.Interaction, genre: str, difficulty: str
     await interaction.user.send(f"問題ですわ♪: {quiz['question']}\n※このDMに答えを返信してね♡")
     await interaction.response.send_message("クイズをDMで送信しましたわ♪", ephemeral=True)
 
-# --- メッセージ応答処理（DM・チャンネル共通） ---
+# --- メッセージ応答処理 ---
 @bot.event
 async def on_message(message):
     if message.author.bot:
+        return
+
+    # ✅ 指定されたチャンネルとDMのみ応答
+    if not isinstance(message.channel, discord.DMChannel) and message.channel.id != ALLOWED_CHANNEL_ID:
         return
 
     user_id = str(message.author.id)
@@ -118,7 +123,7 @@ async def on_message(message):
     mode = user_modes.get(user_id, "default")
     prefix = ""
 
-    # ご主人様には優しく、他の人はモードごとにキャラ分け
+    # ご主人様には可愛いメイド、他の人はモードに応じた口調
     if user_id == OWNER_ID:
         prefix = "ご主人様、私が可愛くお話ししますわね♡ "
     else:

@@ -191,7 +191,7 @@ async def mode_cmd(interaction: discord.Interaction, mode: str):
         global current_mode
         if mode in MODES:
             current_mode = mode
-            await interaction.response.send_message(f"モード：{MODES[mode]}", ephemeral=True)
+            await interaction.response.send_message(f"モード：{MODES[mode]} に変更しました。", ephemeral=True) # メッセージを調整
         else:
             await interaction.response.send_message(f"無効なモードです。選択肢: {', '.join(MODES.keys())}", ephemeral=True)
     except Exception as e:
@@ -309,15 +309,16 @@ async def on_message(message):
     # Gemini返答取得
     reply = await get_gemini_reply(message.author.id, str(message.author), content)
 
-    # モード別文末付加
-    if current_mode == "neet":
-        reply += "\n（ニートモードで自虐的に）"
-    elif current_mode == "debate":
-        reply += "\n（論破モードで反論します）"
-    elif current_mode == "roast":
-        reply += "\n（超絶煽りモードです）"
-    elif current_mode == "tgif":
-        reply += "\n（感謝と神崇拝モード）"
+    # --- 以下のモード別文末付加部分を削除 ---
+    # if current_mode == "neet":
+    #     reply += "\n（ニートモードで自虐的に）"
+    # elif current_mode == "debate":
+    #     reply += "\n（論破モードで反論します）"
+    # elif current_mode == "roast":
+    #     reply += "\n（超絶煽りモードです）"
+    # elif current_mode == "tgif":
+    #     reply += "\n（感謝と神崇拝モード）"
+    # ------------------------------------
 
     await message.channel.send(reply)
 
@@ -325,4 +326,3 @@ async def on_message(message):
 if __name__ == "__main__":
     keep_alive()
     bot.run(TOKEN)
-

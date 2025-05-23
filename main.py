@@ -261,24 +261,25 @@ async def on_message(message):
         if "日本の天気" in lowered or "東京の天気" in lowered:
             weather_text = await get_weather("Tokyo")
             await message.channel.send(weather_text)
-        elif "フィリピンの天気" in lowered or "セブの天気" in lowered:
-            weather_text = await get_weather("Cebu")
-            await message.channel.send(weather_text)
-        else:
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(None, lambda: model.generate_content(history))
-            text = response.text
-            text = text.replace("にゃん♡", "").replace("にゃん", "")
-            if len(text) > 2000:
-                text = text[:1997] + "..."
-            await message.channel.send(text)
-            conversation_history[user_id] = history
-    except Exception:
-        traceback.print_exc()
-        await message.channel.send("応答に失敗しましたわ、ごめんなさい。")
+            return
+
+        response = model.generate(
+            prompt=prompt,
+            temperature=0.7,
+            max_output_tokens=512,
+            candidate_count=1,
+            top_p=0.8,
+            top_k=40,
+            stop_sequences=["\n"]
+        )
+        text = response.generations[0].text
+        conversation_history[user_id] = history
+        await message.channel.send(text)
+    except Exception as e:
+        tb_str = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
+        await message.channel.send(f"エラーが発生しました。\n{tb_str}")
 
     await bot.process_commands(message)
 
-# --- 実行 ---
 keep_alive()
 bot.run(TOKEN)

@@ -1,6 +1,5 @@
 import discord
 from discord.ext import commands
-from discord.commands import Option, SlashCommandGroup
 import google.generativeai as genai
 import os
 import asyncio
@@ -39,7 +38,13 @@ intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
 
-bot = discord.Bot(intents=intents)
+bot = commands.Bot(command_prefix="/", intents=intents)
+
+# --- 起動イベントでスラッシュコマンドを同期 ---
+@bot.event
+async def on_ready():
+    await bot.tree.sync()
+    print(f"ログイン成功: {bot.user}")
 
 # --- 会話履歴 & モード管理 ---
 user_last_request = {}
@@ -55,12 +60,14 @@ MODES = {
     "tgif": "神崇拝モード（感謝）",
 }
 
-# --- モード切替コマンド ---
-@bot.slash_command(name="mode", description="Botの返答モードを切り替える")
-async def mode(ctx, mode_name: Option(str, "モード名", choices=list(MODES.keys()))):
-    user_id = str(ctx.author.id)
-    user_modes[user_id] = mode_name
-    await ctx.respond(f"モードを『{MODES[mode_name]}』に切り替えました。")
+# --- モード切替スラッシュコマンド ---
+@bot.tree.command(name="mode", description="Botの返答モードを切り替える")
+async def mode(interaction: discord.Interaction, mode_name: str):
+    if mode_name not in MODES:
+        await interaction.response.send_message("無効なモード名です。")
+        return
+    user_modes[str(interaction.user.id)] = mode_name
+    await interaction.response.send_message(f"モードを『{MODES[mode_name]}』に切り替えました。")
 
 # --- クイズ問題集 ---
 QUIZ = {
@@ -91,26 +98,30 @@ QUIZ = {
     },
 }
 
-@bot.slash_command(name="quiz", description="ジャンルと難易度を選んでクイズに挑戦！")
+@bot.tree.command(name="quiz", description="ジャンルと難易度を選んでクイズに挑戦！")
 async def quiz(
-    ctx,
-    genre: Option(str, "ジャンルを選んでください", choices=list(QUIZ.keys())),
-    level: Option(str, "難易度を選んでください", choices=["簡単", "普通", "難しい"]),
+    interaction: discord.Interaction,
+    genre: str,
+    level: str
 ):
+    if genre not in QUIZ or level not in QUIZ[genre]:
+        await interaction.response.send_message("ジャンルまたは難易度が無効です。")
+        return
+
     question, answer = random.choice(QUIZ[genre][level])
-    await ctx.respond(f"【{genre} - {level}】\n問題: {question}")
+    await interaction.response.send_message(f"【{genre} - {level}】\n問題: {question}")
 
     def check(m):
-        return m.author == ctx.author and m.channel == ctx.channel
+        return m.author == interaction.user and m.channel == interaction.channel
 
     try:
         msg = await bot.wait_for("message", timeout=30.0, check=check)
         if answer in msg.content:
-            await ctx.send("正解！🎉")
+            await interaction.followup.send("正解！🎉")
         else:
-            await ctx.send(f"残念！正解は「{answer}」でした。")
+            await interaction.followup.send(f"残念！正解は「{answer}」でした。")
     except asyncio.TimeoutError:
-        await ctx.send("時間切れ！⏰")
+        await interaction.followup.send("時間切れ！⏰")
 
 # --- 応答生成関数 ---
 async def generate_response(message_content: str, author_id: str, author_name: str) -> str:
@@ -163,25 +174,17 @@ async def generate_response(message_content: str, author_id: str, author_name: s
         return response.text.strip()
     except Exception as e:
         print("Geminiエラー:", e)
-        return "しっかり返答はするものの…エラーが発生しました。GEMINIが休憩中なのかもね。"
+        return "GEMINIがエラーを起こしてるみたい…"
 
-# --- メッセージイベント ---
+# --- メッセージ応答イベント ---
 @bot.event
 async def on_message(message):
     if message.author.bot or message.channel.id != TARGET_CHANNEL_ID:
         return
-
     if message.content.startswith("/"):
-        return  # スラッシュコマンドに任せる
-
+        return
     reply = await generate_response(message.content, str(message.author.id), message.author.name)
     await message.channel.send(reply)
-
-# --- 起動イベント ---
-@bot.event
-async def on_ready():
-    print(f"ログイン成功: {bot.user}")
-    print("起動しました！")
 
 # --- メイン起動 ---
 if __name__ == "__main__":

@@ -74,24 +74,24 @@ async def mode_cmd(interaction: discord.Interaction, mode: str):
     user_id = str(interaction.user.id)
     if mode in MODES:
         user_modes[user_id] = mode
-        await interaction.response.send_message(f"モードを『{MODES[mode]}』に変更しました。", ephemeral=True)
+        await interaction.response.send_message(f"モードを『{MODES[mode]}』に変更しましたわ♪", ephemeral=True)
     else:
         current = MODES.get(user_modes.get(user_id, "default"))
-        await interaction.response.send_message(f"現在のモードは『{current}』です。有効なモード: {', '.join(MODES.keys())}", ephemeral=True)
+        await interaction.response.send_message(f"現在のモードは『{current}』ですわ♡ 有効なモード: {', '.join(MODES.keys())}", ephemeral=True)
 
 # --- /quizコマンド ---
 @tree.command(name="quiz", description="クイズを出題します")
 async def quiz_cmd(interaction: discord.Interaction, genre: str, difficulty: str):
     genre_data = QUIZ_DATA.get(genre)
     if not genre_data or difficulty not in genre_data:
-        await interaction.response.send_message("ジャンルまたは難易度が無効です。", ephemeral=True)
+        await interaction.response.send_message("ジャンルまたは難易度が無効ですわ、ごめんなさいね。", ephemeral=True)
         return
 
     quiz = random.choice(genre_data[difficulty])
     user_id = str(interaction.user.id)
     active_quizzes[user_id] = {"answer": quiz["answer"], "channel_id": interaction.channel.id}
-    await interaction.user.send(f"問題: {quiz['question']}\n※このDMに答えを返信してね！")
-    await interaction.response.send_message("クイズをDMで送信しました。", ephemeral=True)
+    await interaction.user.send(f"問題ですわ♪: {quiz['question']}\n※このDMに答えを返信してね♡")
+    await interaction.response.send_message("クイズをDMで送信しましたわ♪", ephemeral=True)
 
 # --- メッセージ応答処理（DM・チャンネル共通） ---
 @bot.event
@@ -108,28 +108,30 @@ async def on_message(message):
         channel = bot.get_channel(quiz["channel_id"])
         if channel:
             if message.content.strip().lower() == answer.lower():
-                await channel.send(f"{message.author.name} の回答：正解！🎉")
+                await channel.send(f"{message.author.name} さんの回答：正解ですわ！お見事ですの♪🎉")
             else:
-                await channel.send(f"{message.author.name} の回答：不正解！正解は「{answer}」だよ。")
+                await channel.send(f"{message.author.name} さんの回答：残念ですわ、不正解ですの。正解は「{answer}」でしたわよ。")
         del active_quizzes[user_id]
         return
 
     # Gemini APIで応答
     mode = user_modes.get(user_id, "default")
     prefix = ""
+
+    # ご主人様には優しく、他の人はモードごとにキャラ分け
     if user_id == OWNER_ID:
-        prefix = ""
+        prefix = "ご主人様、私が可愛くお話ししますわね♡ "
     else:
         if mode == "tgif":
-            prefix = "神に感謝しながら、"
+            prefix = "神に感謝しながら、私からのご挨拶ですわ♡ "
         elif mode == "neet":
-            prefix = "俺なんかが言うのもあれだけど、"
+            prefix = "私なんてダメメイドですけど、ちょっと言わせてくださいね。"
         elif mode == "debate":
-            prefix = "論破させてもらうが、"
+            prefix = "論破させていただきますわ！ "
         elif mode == "roast":
-            prefix = "お前それマジで言ってる？"
+            prefix = "お前、それ本気で言ってるの？バカバカしいわね。"
         elif mode == "default":
-            prefix = "は？バカかお前、"
+            prefix = "は？バカかお前、これだから甘やかすのはやめてほしいわ。"
 
     prompt = prefix + message.content
 
@@ -142,7 +144,7 @@ async def on_message(message):
         await message.channel.send(text)
     except Exception:
         traceback.print_exc()
-        await message.channel.send("応答に失敗したよ。")
+        await message.channel.send("応答に失敗しましたわ、ごめんなさい。")
 
     await bot.process_commands(message)
 

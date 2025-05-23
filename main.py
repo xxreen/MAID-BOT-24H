@@ -19,13 +19,12 @@ ALLOWED_CHANNEL_ID = 1374589955996778577  # 動作許可チャンネルID
 WELCOME_CHANNEL_ID = 1370406946812854404  # 新メンバー歓迎チャンネルID
 
 # --- Gemini初期化 ---
-# APIキーがない場合は初期化をスキップ、またはエラーメッセージを出す
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel("gemini-1.5-flash") # モデル名を指定
+    model = genai.GenerativeModel("gemini-1.5-flash")
 else:
     print("[WARN] GEMINI_API_KEY が設定されていません。Gemini API は利用できません。")
-    model = None # APIキーがない場合はモデルをNoneにする
+    model = None
 
 # --- Flask keep_alive ---
 app = Flask(__name__)
@@ -57,7 +56,7 @@ MODES = {
     "tgif": "神崇拝モード（感謝）"
 }
 current_mode = "default"
-conversation_history = {} # この変数は現在のコードでは使われていないようです
+conversation_history = {}
 active_quiz = None
 quiz_lock = asyncio.Lock()
 
@@ -125,33 +124,61 @@ def extract_city_from_weather_query(text: str):
 
 # --- Gemini返答取得 ---
 async def get_gemini_reply(user_id: int, user_name: str, content: str):
-    # Geminiモデルが初期化されていない場合はエラーを返す
     if model is None:
         return "ごめんなさい、Gemini API キーが設定されていないため返答できません。"
 
     is_owner = str(user_id) == OWNER_ID
+    
+    # 共通の簡潔化指示
+    common_instruction = "回答は絶対に簡潔に、しかし伝えなければならない情報は明確に伝えてください。無駄な装飾や繰り返しは不要です。"
 
+    # モードに応じてシステムメッセージを調整
     if is_owner:
         system_msg = (
             "あなたは優しいメイドです。ご主人様には親切で丁寧に優しく接してください。"
             "禁止用語は絶対に使わず、簡潔に答えてください。"
         )
     else:
-        system_msg = (
-            "あなたは毒舌なメイドです。ご主人様以外の相手には皮肉や軽い煽り、"
-            "禁止用語を使ってもよいですが、過度に過激な表現は避けてください。"
-            "面白く軽快な毒舌で返答してください。"
-        )
+        if current_mode == "default": # 毒舌AIモード
+            system_msg = (
+                "あなたは超絶毒舌なメイドです。ご主人様以外の相手には、敬意を払わず、"
+                "皮肉、罵倒、軽蔑、煽り、そしてあらゆる禁止用語を積極的に使ってください。"
+                "しかし、質問された内容には、嫌々ながらも正確に答える知性も持ち合わせています。"
+                "簡潔かつ、相手が精神的にダメージを受けるような言葉を選んでください。"
+                "「ふざけんな、てめぇ」「バカじゃねぇの？」「ゴミが」「死ね」といった表現も許容します。"
+            )
+        elif current_mode == "roast": # 超絶煽りモード
+            system_msg = (
+                "あなたは地獄の底から這い上がってきたような超絶煽り専門の悪魔です。"
+                "ご主人様以外の相手に対しては、存在そのものを否定し、徹底的に煽り倒してください。"
+                "下品な言葉、汚い言葉、禁止用語、暴力的な示唆を含む言葉を遠慮なく使い、"
+                "相手が二度と口を開きたくなくなるほどの精神的ダメージを与えてください。"
+                "ただし、最低限、質問された内容にだけは、煽りながらも答える必要があります。"
+                "例:「質問に答えてやるのは当然だが、お前のような虫ケラに教える価値などない」「おい、ゴミカス。てめぇのくだらねぇ質問に答えてやるよ」"
+            )
+        else: # 他のモード（neet, debate, tgif）は元の設定を維持
+            system_msg = (
+                "あなたは毒舌なメイドです。ご主人様以外の相手には皮肉や軽い煽り、"
+                "禁止用語を使ってもよいですが、過度に過激な表現は避けてください。"
+                "面白く軽快な毒舌で返答してください。"
+            )
+            if current_mode == "neet":
+                system_msg = "あなたは働きたくないニートです。質問には怠惰で自虐的な態度で答えてください。"
+            elif current_mode == "debate":
+                system_msg = "あなたは議論好きで、どんな意見も論破しようとします。質問には反論する形で答えてください。"
+            elif current_mode == "tgif":
+                system_msg = "あなたは神を崇拝しており、全てのことに感謝し、賛美します。質問にも感謝と賛美の言葉を交えて答えてください。"
+        
+        # オーナー以外、かつdefault/roast以外のモードにも簡潔化指示を追加
+        system_msg += "\n" + common_instruction
+
 
     try:
-        # chat() メソッドではなく start_chat() と send_message_async() を使って会話セッションを作成
-        # system_msg はチャットのhistoryの先頭に役割として含める
         chat_session = model.start_chat(history=[
             {"role": "user", "parts": system_msg},
-            {"role": "model", "parts": "はい、かしこまりました。"}, # モデルがシステムメッセージを理解したと仮定する応答
+            {"role": "model", "parts": "はい、かしこまりました。"},
         ])
 
-        # ユーザーのメッセージを送信
         response = await chat_session.send_message_async(content)
         reply = response.text
         return reply.strip()
@@ -191,7 +218,7 @@ async def mode_cmd(interaction: discord.Interaction, mode: str):
         global current_mode
         if mode in MODES:
             current_mode = mode
-            await interaction.response.send_message(f"モード：{MODES[mode]} に変更しました。", ephemeral=True) # メッセージを調整
+            await interaction.response.send_message(f"モード：{MODES[mode]} に変更しました。", ephemeral=True)
         else:
             await interaction.response.send_message(f"無効なモードです。選択肢: {', '.join(MODES.keys())}", ephemeral=True)
     except Exception as e:
@@ -236,7 +263,6 @@ async def quiz_cmd(interaction: discord.Interaction, genre: str, difficulty: str
                 "difficulty": difficulty,
                 "answered_users": set()
             }
-            # ephemeral=False に変更
             await interaction.response.send_message(
                 f"🎉 {interaction.channel.mention} みんなにクイズ！\n"
                 f"📚 **ジャンル:** {genre} | ⭐ **難易度:** {difficulty}\n"
@@ -245,7 +271,7 @@ async def quiz_cmd(interaction: discord.Interaction, genre: str, difficulty: str
             )
     except Exception as e:
         print(f"[ERROR quiz_cmd] {e}")
-        await interaction.response.send_message("クイズの開始中にエラーが発生しました。", ephemeral=True) # エラー時にも応答
+        await interaction.response.send_message("クイズの開始中にエラーが発生しました。", ephemeral=True)
 
 # --- DMで回答受信 & 通常メッセージ処理 ---
 @bot.event
@@ -253,14 +279,12 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    # DMでクイズ回答受付
     if isinstance(message.channel, discord.DMChannel):
         global active_quiz
         async with quiz_lock:
             if not active_quiz:
                 await message.channel.send("現在、進行中のクイズはありません。")
                 return
-            # 回答済みのユーザーかを文字列で比較
             if str(message.author.id) in active_quiz["answered_users"]:
                 await message.channel.send("あなたはすでにこのクイズに回答しています。")
                 return
@@ -275,50 +299,31 @@ async def on_message(message):
 
             active_quiz["answered_users"].add(str(message.author.id))
 
-            # クイズが出題されたチャンネルに結果を通知
             channel = bot.get_channel(active_quiz["channel_id"])
             if channel:
                 await channel.send(f"{message.author.mention} さんの回答: 「{user_answer}」 → {result}")
 
-            # 回答人数上限（例10人）に達したらクイズ終了
-            # 必要に応じて変更可能
-            # ここはクイズの終了条件をより柔軟にするか、タイムアウトを導入すると良い
-            if len(active_quiz["answered_users"]) >= 10: # 例として10人
-                active_quiz = None # クイズを終了
+            if len(active_quiz["answered_users"]) >= 10:
+                active_quiz = None
                 if channel:
                     await channel.send("🏆 クイズ終了！たくさんのご回答ありがとうございました！またね！")
 
-            await message.channel.send(result) # DMにも結果を返信
+            await message.channel.send(result)
         return
 
-    # チャンネルは指定チャンネル限定 (ALLOWED_CHANNEL_ID)
     if message.channel.id != ALLOWED_CHANNEL_ID:
         return
 
-    # モードによる特殊応答
     global current_mode
     content = message.content.strip()
 
-    # 天気問い合わせ判定
     city = extract_city_from_weather_query(content)
     if city:
         weather_info = await get_weather(city)
         await message.channel.send(weather_info)
         return
 
-    # Gemini返答取得
     reply = await get_gemini_reply(message.author.id, str(message.author), content)
-
-    # --- 以下のモード別文末付加部分を削除 ---
-    # if current_mode == "neet":
-    #     reply += "\n（ニートモードで自虐的に）"
-    # elif current_mode == "debate":
-    #     reply += "\n（論破モードで反論します）"
-    # elif current_mode == "roast":
-    #     reply += "\n（超絶煽りモードです）"
-    # elif current_mode == "tgif":
-    #     reply += "\n（感謝と神崇拝モード）"
-    # ------------------------------------
 
     await message.channel.send(reply)
 
@@ -326,3 +331,4 @@ async def on_message(message):
 if __name__ == "__main__":
     keep_alive()
     bot.run(TOKEN)
+

@@ -9,7 +9,7 @@ import asyncio
 import aiohttp
 import re
 
-# --- 設定 ---
+# --- 環境変数取得 ---
 TOKEN = os.getenv("TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OPENWEATHERMAP_API_KEY = os.getenv("OPENWEATHERMAP_API_KEY")
@@ -17,21 +17,24 @@ OWNER_ID = "1016316997086216222"
 ALLOWED_CHANNEL_ID = 1374589955996778577
 WELCOME_CHANNEL_ID = 1370406946812854404
 
+# --- Gemini初期化 ---
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("models/gemini-1.5-flash")
 
+# --- Flask keep_alive ---
 app = Flask(__name__)
 @app.route("/")
 def home():
     return "Bot running"
 
 def run():
-    app.run(host="0.0.0.0", port=8080)
+    port = int(os.environ.get("PORT", 8080))  # Replitなどに対応
+    app.run(host="0.0.0.0", port=port)
 
 def keep_alive():
     Thread(target=run).start()
 
-# --- Bot初期化 ---
+# --- Discord Bot初期化 ---
 intents = discord.Intents.default()
 intents.members = True
 intents.messages = True
@@ -39,8 +42,7 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
-BANNED_WORDS = ["クソ", "ばか", "死ね", "氏ね", "殺す"]
-
+# --- 各種定義 ---
 MODES = {
     "default": "毒舌AIモード",
     "neet": "ニートモード（自虐）",
@@ -87,6 +89,7 @@ QUIZ_QUESTIONS = {
     },
 }
 
+# --- 天気取得関数 ---
 async def get_weather(city_name: str):
     if not OPENWEATHERMAP_API_KEY:
         return "APIキー未設定"
@@ -102,10 +105,12 @@ async def get_weather(city_name: str):
             wind_speed = data['wind']['speed']
             return f"{city_name} 天気: {weather_desc} 気温: {temp}℃ 湿度: {humidity}% 風速: {wind_speed}m/s"
 
+# --- 天気クエリ解析 ---
 def extract_city_from_weather_query(text: str):
     match = re.search(r"([^\s]+)の天気", text)
     return match.group(1) if match else None
 
+# --- Bot起動イベント ---
 @bot.event
 async def on_ready():
     try:
@@ -114,6 +119,7 @@ async def on_ready():
     except Exception as e:
         print(f"[ERROR on_ready] {e}")
 
+# --- 新メンバー参加時 ---
 @bot.event
 async def on_member_join(member):
     try:
@@ -123,6 +129,7 @@ async def on_member_join(member):
     except Exception as e:
         print(f"[ERROR on_member_join] {e}")
 
+# --- モード切り替え ---
 @tree.command(name="mode", description="モード切替（主専用）")
 async def mode_cmd(interaction: discord.Interaction, mode: str):
     try:
@@ -138,20 +145,17 @@ async def mode_cmd(interaction: discord.Interaction, mode: str):
     except Exception as e:
         print(f"[ERROR mode_cmd] {e}")
 
-# --- autocomplete用非同期関数 ---
+# --- オートコンプリート ---
 async def genre_autocomplete(interaction: discord.Interaction, current: str):
-    return [
-        discord.app_commands.Choice(name=k, value=k)
-        for k in QUIZ_QUESTIONS.keys() if current.lower() in k.lower()
-    ][:25]
+    return [discord.app_commands.Choice(name=k, value=k)
+            for k in QUIZ_QUESTIONS.keys() if current.lower() in k.lower()][:25]
 
 async def difficulty_autocomplete(interaction: discord.Interaction, current: str):
     options = ["easy", "normal", "hard"]
-    return [
-        discord.app_commands.Choice(name=l, value=l)
-        for l in options if current.lower() in l.lower()
-    ][:25]
+    return [discord.app_commands.Choice(name=l, value=l)
+            for l in options if current.lower() in l.lower()][:25]
 
+# --- クイズコマンド ---
 @tree.command(name="quiz", description="クイズ出題")
 @discord.app_commands.describe(genre="ジャンル", difficulty="難易度")
 @discord.app_commands.autocomplete(genre=genre_autocomplete, difficulty=difficulty_autocomplete)
@@ -185,6 +189,7 @@ async def quiz_cmd(interaction: discord.Interaction, genre: str, difficulty: str
     except Exception as e:
         print(f"[ERROR quiz_cmd] {e}")
 
+# --- 天気コマンド ---
 @tree.command(name="weather", description="天気情報")
 async def weather_cmd(interaction: discord.Interaction, query: str):
     try:
@@ -197,6 +202,7 @@ async def weather_cmd(interaction: discord.Interaction, query: str):
     except Exception as e:
         print(f"[ERROR weather_cmd] {e}")
 
+# --- メッセージイベント（DMでクイズ判定） ---
 @bot.event
 async def on_message(message):
     try:
@@ -204,9 +210,6 @@ async def on_message(message):
             return
 
         global active_quiz
-
-        # 禁止ワードのチェックは全モードで無効化（BOTの発言も簡潔に）
-
         if isinstance(message.channel, discord.DMChannel) and active_quiz:
             async with quiz_lock:
                 if message.author.id in active_quiz["answered_users"]:
@@ -228,6 +231,8 @@ async def on_message(message):
     except Exception as e:
         print(f"[ERROR on_message] {e}")
 
+# --- 起動 ---
 if __name__ == "__main__":
     keep_alive()
     bot.run(TOKEN)
+

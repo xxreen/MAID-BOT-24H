@@ -123,12 +123,12 @@ async def on_message(message):
     if message.author.bot or message.channel.id != TARGET_CHANNEL_ID:
         return
 
-    await bot.process_commands(message)
+    if message.content.startswith("/"):
+        await bot.process_commands(message)
+        return
 
-    content = message.content.strip()
-    if not content.startswith("/"):
-        reply = await generate_response(content, str(message.author.id), message.author.name)
-        await message.channel.send(reply)
+    reply = await generate_response(message.content, str(message.author.id), message.author.name)
+    await message.channel.send(reply)
 
 # --- 起動イベント ---
 @bot.event

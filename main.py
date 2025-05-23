@@ -4,18 +4,13 @@ import os
 import random
 from flask import Flask
 from threading import Thread
-import google.generativeai as genai
 
 # --- 設定 ---
 TOKEN = os.getenv("TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OWNER_ID = "1016316997086216222"
-
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-pro")
-
 app = Flask(__name__)
 
+# --- Webサーバー ---
 @app.route("/")
 def home():
     return "Bot is running!"
@@ -26,12 +21,14 @@ def run():
 def keep_alive():
     Thread(target=run).start()
 
+# --- Bot初期化 ---
 intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
+# --- モード・クイズ設定 ---
 MODES = {
     "default": "毒舌AIモード",
     "neet": "ニートモード（自虐）",
@@ -57,11 +54,13 @@ QUIZ_DATA = {
     }
 }
 
+# --- 起動時 ---
 @bot.event
 async def on_ready():
     await tree.sync()
     print(f"ログイン成功: {bot.user}")
 
+# --- /modeコマンド ---
 @tree.command(name="mode", description="モードを切り替えます")
 async def mode_cmd(interaction: discord.Interaction, mode: str):
     user_id = str(interaction.user.id)
@@ -72,6 +71,7 @@ async def mode_cmd(interaction: discord.Interaction, mode: str):
         current = MODES.get(user_modes.get(user_id, "default"))
         await interaction.response.send_message(f"現在のモードは『{current}』です。有効なモード: {', '.join(MODES.keys())}", ephemeral=True)
 
+# --- /quizコマンド ---
 @tree.command(name="quiz", description="クイズを出題します")
 async def quiz_cmd(interaction: discord.Interaction, genre: str, difficulty: str):
     genre_data = QUIZ_DATA.get(genre)
@@ -85,6 +85,7 @@ async def quiz_cmd(interaction: discord.Interaction, genre: str, difficulty: str
     await interaction.user.send(f"問題: {quiz['question']}\n※このDMに答えを返信してね！")
     await interaction.response.send_message("クイズをDMで送信しました。", ephemeral=True)
 
+# --- 解答チェック ---
 @bot.event
 async def on_message(message):
     if message.author.bot:
@@ -92,7 +93,7 @@ async def on_message(message):
 
     user_id = str(message.author.id)
 
-    # DMでのクイズ解答処理
+    # DMでの解答処理
     if isinstance(message.channel, discord.DMChannel) and user_id in active_quizzes:
         quiz = active_quizzes[user_id]
         answer = quiz["answer"]
@@ -102,36 +103,9 @@ async def on_message(message):
         else:
             await channel.send(f"{message.author.name} の回答：不正解！正解は「{answer}」だよ。")
         del active_quizzes[user_id]
-        return
+    else:
+        await bot.process_commands(message)
 
-    is_owner = (user_id == OWNER_ID)
-    mode = user_modes.get(user_id, "default")
-
-    prefix = ""
-    if mode == "tgif":
-        prefix = "神に感謝しながら、"
-    elif mode == "neet":
-        prefix = "俺なんかが言うのもあれだけど、"
-    elif mode == "debate":
-        prefix = "論破させてもらうが、"
-    elif mode == "roast":
-        prefix = "お前それマジで言ってる？"
-    elif mode == "default":
-        prefix = "" if is_owner else "は？バカかお前、"
-
-    prompt = prefix + message.content
-    if len(prompt) > 5000:
-        await message.channel.send("メッセージが長すぎるよ。")
-        return
-
-    try:
-        response = model.generate_content(prompt)
-        await message.channel.send(response.text)
-    except Exception as e:
-        print(f"Geminiエラー: {e}")
-        await message.channel.send("応答に失敗したよ。")
-
-    await bot.process_commands(message)
-
+# --- 実行 ---
 keep_alive()
 bot.run(TOKEN)

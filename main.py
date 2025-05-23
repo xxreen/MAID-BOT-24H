@@ -7,7 +7,7 @@ import time
 from flask import Flask
 from threading import Thread
 
-# --- 設定 ---
+# --- Discord & Gemini設定 ---
 OWNER_ID = "1016316997086216222"
 TARGET_CHANNEL_ID = 1374589955996778577
 
@@ -36,7 +36,6 @@ def keep_alive():
 intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
-intents.dm_messages = True
 
 bot = commands.Bot(command_prefix="/", intents=intents)
 
@@ -54,158 +53,91 @@ MODES = {
     "tgif": "神崇拝モード（感謝）",
 }
 
-# --- クイズデータ ---
-QUIZ_QUESTIONS = {
-    "anime": {
-        "easy": [
-            {"question": "ドラゴンボールの主人公は誰？", "answer": "孫悟空"},
-            {"question": "ワンピースの主人公は？", "answer": "モンキー・D・ルフィ"},
-        ],
-        "normal": [
-            {"question": "進撃の巨人で調査兵団の団長は？", "answer": "リヴァイ"},
-        ],
-        "hard": [
-            {"question": "ナルトの主人公のフルネームは？", "answer": "うずまきナルト"},
-        ],
-    },
-    "math": {
-        "easy": [
-            {"question": "2 + 2 は？", "answer": "4"},
-            {"question": "5 - 3 は？", "answer": "2"},
-        ],
-        "normal": [
-            {"question": "3の2乗はいくつ？", "answer": "9"},
-        ],
-        "hard": [
-            {"question": "微分の公式を一つ答えて。", "answer": "d/dx"},
-        ],
-    },
-    "japanese": {
-        "easy": [
-            {"question": "『ありがとう』の意味は？", "answer": "感謝"},
-        ],
-        "normal": [
-            {"question": "俳句は何音節？", "answer": "17"},
-        ],
-        "hard": [
-            {"question": "古典文学の代表作『源氏物語』の作者は？", "answer": "紫式部"},
-        ],
-    },
-    "science": {
-        "easy": [
-            {"question": "水の化学式は？", "answer": "H2O"},
-        ],
-        "normal": [
-            {"question": "地球の重力加速度は？", "answer": "9.8"},
-        ],
-        "hard": [
-            {"question": "光の速さは秒速何キロ？", "answer": "30万"},
-        ],
-    },
-    "social": {
-        "easy": [
-            {"question": "日本の首都は？", "answer": "東京"},
-        ],
-        "normal": [
-            {"question": "第二次世界大戦は何年に終わった？", "answer": "1945"},
-        ],
-        "hard": [
-            {"question": "アメリカ独立宣言は何年？", "answer": "1776"},
-        ],
-    },
-}
-
-# --- クイズ進行管理 ---
-active_quizzes = {}  # user_id: {genre, difficulty, current_q, channel_id}
-
-# --- モード切替スラッシュコマンド ---
-@bot.tree.command(name="mode", description="モードを切り替えます")
-async def mode(interaction: discord.Interaction, mode_name: str):
-    user_id = str(interaction.user.id)
-    if mode_name not in MODES:
-        await interaction.response.send_message(f"無効なモードです。利用可能: {', '.join(MODES.keys())}", ephemeral=True)
-        return
-    user_modes[user_id] = mode_name
-    await interaction.response.send_message(f"モードを『{MODES[mode_name]}』に切り替えました。", ephemeral=True)
-
-# --- クイズ開始スラッシュコマンド ---
-@bot.tree.command(name="quiz", description="ジャンルと難易度を選んでクイズに挑戦！")
-@discord.app_commands.describe(genre="ジャンルを選択", difficulty="難易度を選択")
-async def quiz(interaction: discord.Interaction, genre: str, difficulty: str):
-    user_id = str(interaction.user.id)
-    channel_id = interaction.channel.id
-    genre = genre.lower()
-    difficulty = difficulty.lower()
-
-    if genre not in QUIZ_QUESTIONS or difficulty not in QUIZ_QUESTIONS[genre]:
-        await interaction.response.send_message("ジャンルまたは難易度が無効です。", ephemeral=True)
-        return
-
-    question_list = QUIZ_QUESTIONS[genre][difficulty]
-    if not question_list:
-        await interaction.response.send_message("クイズが登録されていません。", ephemeral=True)
-        return
-
-    active_quizzes[user_id] = {
-        "genre": genre,
-        "difficulty": difficulty,
-        "current_q": 0,
-        "channel_id": channel_id,
-        "questions": question_list,
-    }
-
-    question = question_list[0]["question"]
-    await interaction.response.send_message(f"【{genre}・{difficulty}】クイズを開始します！\n質問: {question}\n答えはDMで送ってください。", ephemeral=False)
-
-# --- DMでクイズ回答受付 ---
-@bot.event
-async def on_message(message: discord.Message):
-    if message.author.bot:
-        return
-
-    user_id = str(message.author.id)
-
-    # チャンネル内メッセージはbotのコマンド処理を通す
-    if message.guild:
-        await bot.process_commands(message)
-        return
-
-    # DMでの処理
-    if user_id not in active_quizzes:
-        await message.channel.send("現在クイズは出題されていません。")
-        return
-
-    quiz = active_quizzes[user_id]
-    current_index = quiz["current_q"]
-    questions = quiz["questions"]
-    channel_id = quiz["channel_id"]
-    channel = bot.get_channel(channel_id)
-    if channel is None:
-        await message.channel.send("エラー: 元のチャンネルが見つかりません。")
-        return
-
-    correct_answer = questions[current_index]["answer"]
-
-    if message.content.strip() == correct_answer:
-        await message.channel.send("正解です！おめでとうございます🎉")
-        await channel.send(f"<@{user_id}> さん、クイズの答えが正解でした！")
+# --- モード切替コマンド ---
+@bot.command()
+async def mode(ctx, *, mode_name=None):
+    user_id = str(ctx.author.id)
+    if mode_name and mode_name in MODES:
+        user_modes[user_id] = mode_name
+        await ctx.send(f"モードを『{MODES[mode_name]}』に切り替えました。")
     else:
-        await message.channel.send("残念、不正解です。")
-        await channel.send(f"<@{user_id}> さん、クイズの答えが間違っています。正解は「{correct_answer}」です。")
+        current = MODES.get(user_modes.get(user_id, "default"))
+        await ctx.send(f"現在のモードは『{current}』です。
+利用可能なモード: {', '.join(MODES.values())}")
 
-    # 次の問題へ
-    quiz["current_q"] += 1
-    if quiz["current_q"] >= len(questions):
-        await channel.send(f"<@{user_id}> さん、クイズは全問終了です！お疲れさまでした。")
-        del active_quizzes[user_id]
-    else:
-        next_question = questions[quiz["current_q"]]["question"]
-        await channel.send(f"<@{user_id}> さん、次の質問はこちらです:\n{next_question}\n答えはDMで送ってください。")
-
-# --- 会話応答関数 ---
+# --- 応答生成関数 ---
 async def generate_response(message_content: str, author_id: str, author_name: str) -> str:
     now = time.time()
     if author_id in user_last_request and now - user_last_request[author_id] < COOLDOWN_SECONDS:
         return "ちょっと待ちな。クールダウン中だよ。"
 
-    user_last
+    user_last_request[author_id] = now
+
+    history = user_memory.get(author_id, [])
+    history.append(f"{author_name}: {message_content}")
+    user_memory[author_id] = history[-10:]
+
+    memory_text = "\n".join(history)
+    mode = user_modes.get(author_id, "default")
+
+    if author_id == OWNER_ID:
+        prompt = (
+            "あなたは可愛い女の子キャラで、ご主人様に従順です。返答は甘く簡潔にしてください。\n"
+            f"会話履歴:\n{memory_text}\n\nご主人様: {message_content}\nあなた:"
+        )
+    elif mode == "neet":
+        prompt = (
+            "あなたは自分をニートと自覚している自虐系毒舌AIです。返答は皮肉混じりで簡潔にしてください。\n"
+            f"会話履歴:\n{memory_text}\n\n相手: {message_content}\nあなた:"
+        )
+    elif mode == "debate":
+        prompt = (
+            "あなたは論破モードの毒舌AIです。相手の発言の矛盾点や過去の発言を利用して痛いところを突いてください。\n"
+            f"会話履歴:\n{memory_text}\n\n相手: {message_content}\nあなた:"
+        )
+    elif mode == "roast":
+        prompt = (
+            "あなたは超絶煽りモードの毒舌AIです。相手を論理と皮肉で叩きのめしてください。ただし暴力的脅迫やBANされる内容は禁止です。\n"
+            f"会話履歴:\n{memory_text}\n\n相手: {message_content}\nあなた:"
+        )
+    elif mode == "tgif":
+        prompt = (
+            "あなたは神聖なるAIで、あらゆる存在に感謝を捧げ、神を崇拝しています。返答は敬虔で神聖な口調にしてください。\n"
+            f"会話履歴:\n{memory_text}\n\n民: {message_content}\nあなた:"
+        )
+    else:
+        prompt = (
+            "あなたは毒舌で、皮肉混じりの簡潔な返答をするAIです。\n"
+            f"会話履歴:\n{memory_text}\n\n相手: {message_content}\nあなた:"
+        )
+
+    try:
+        response = await asyncio.to_thread(model.generate_content, [prompt])
+        return response.text.strip()
+    except Exception as e:
+        print("Geminiエラー:", e)
+        return "しっかり返答はするものの…エラーが発生しました。GEMINIが休憩中なのかもね。"
+
+# --- メッセージイベント ---
+@bot.event
+async def on_message(message):
+    if message.author.bot or message.channel.id != TARGET_CHANNEL_ID:
+        return
+
+    if message.content.startswith("/"):
+        await bot.process_commands(message)
+        return
+
+    reply = await generate_response(message.content, str(message.author.id), message.author.name)
+    await message.channel.send(reply)
+
+# --- 起動イベント ---
+@bot.event
+async def on_ready():
+    print(f"ログイン成功: {bot.user}")
+    print("起動しました！")
+
+# --- メイン起動 ---
+if __name__ == "__main__":
+    keep_alive()
+    bot.run(DISCORD_TOKEN)

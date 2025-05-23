@@ -19,7 +19,6 @@ model = genai.GenerativeModel("models/gemini-1.5-flash")
 
 app = Flask(__name__)
 
-# --- Webサーバー ---
 @app.route("/")
 def home():
     return "Bot is running!"
@@ -45,7 +44,7 @@ MODES = {
     "roast": "超絶煽りモード",
     "tgif": "神崇拝モード（感謝）"
 }
-user_modes = {}
+current_mode = "default"
 active_quizzes = {}
 
 QUIZ_DATA = {
@@ -69,16 +68,19 @@ async def on_ready():
     await tree.sync()
     print(f"ログイン成功: {bot.user}")
 
-# --- /modeコマンド ---
-@tree.command(name="mode", description="モードを切り替えます")
+# --- /mode（ご主人様専用） ---
+@tree.command(name="mode", description="モードを切り替えます（ご主人様専用）")
 async def mode_cmd(interaction: discord.Interaction, mode: str):
-    user_id = str(interaction.user.id)
+    if str(interaction.user.id) != OWNER_ID:
+        await interaction.response.send_message("このコマンドはご主人様専用ですわ♡", ephemeral=True)
+        return
+
+    global current_mode
     if mode in MODES:
-        user_modes[user_id] = mode
-        await interaction.response.send_message(f"モードを『{MODES[mode]}』に変更しましたわ♪", ephemeral=True)
+        current_mode = mode
+        await interaction.response.send_message(f"モードを『{MODES[mode]}』に変更しましたわ♡", ephemeral=True)
     else:
-        current = MODES.get(user_modes.get(user_id, "default"))
-        await interaction.response.send_message(f"現在のモードは『{current}』ですわ♡ 有効なモード: {', '.join(MODES.keys())}", ephemeral=True)
+        await interaction.response.send_message(f"無効なモードですわ。使えるモード: {', '.join(MODES.keys())}", ephemeral=True)
 
 # --- /quizコマンド ---
 @tree.command(name="quiz", description="クイズを出題します")
@@ -100,7 +102,7 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    # ✅ 指定されたチャンネルとDMのみ応答
+    # 指定されたチャンネルとDMのみ応答
     if not isinstance(message.channel, discord.DMChannel) and message.channel.id != ALLOWED_CHANNEL_ID:
         return
 
@@ -119,24 +121,24 @@ async def on_message(message):
         del active_quizzes[user_id]
         return
 
-    # Gemini APIで応答
-    mode = user_modes.get(user_id, "default")
-    prefix = ""
-
-    # ご主人様には可愛いメイド、他の人はモードに応じた口調
+    # Gemini応答生成
     if user_id == OWNER_ID:
-        prefix = "ご主人様、私が可愛くお話ししますわね♡ "
+        prefix = (
+            "ご主人様ぁ♡ いつもお疲れ様ですわ♡ どんなお話でも全力でお応えしますから、"
+            "なんでも聞いてくださいませ〜っ♪ にゃん♡ → "
+        )
     else:
+        mode = current_mode
         if mode == "tgif":
-            prefix = "神に感謝しながら、私からのご挨拶ですわ♡ "
+            prefix = "神よ、感謝と祈りを捧げながらお答えいたしますわ♡ → "
         elif mode == "neet":
-            prefix = "私なんてダメメイドですけど、ちょっと言わせてくださいね。"
+            prefix = "こんな私で良ければ、答えさせていただきますね……。→ "
         elif mode == "debate":
-            prefix = "論破させていただきますわ！ "
+            prefix = "論理的に粉砕して差し上げますわ。→ "
         elif mode == "roast":
-            prefix = "お前、それ本気で言ってるの？バカバカしいわね。"
-        elif mode == "default":
-            prefix = "は？バカかお前、これだから甘やかすのはやめてほしいわ。"
+            prefix = "おいおい、そんなことも分からないのかよ。→ "
+        else:
+            prefix = "またくだらないこと聞いてきたの？仕方ないから答えてあげるわ。→ "
 
     prompt = prefix + message.content
 

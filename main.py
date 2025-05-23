@@ -1,4 +1,4 @@
-import discord
+impimport discord
 from discord.ext import commands
 import os
 import random
@@ -224,14 +224,11 @@ async def quiz_cmd(interaction: discord.Interaction, genre: str, difficulty: str
     except Exception as e:
         print(f"[ERROR quiz_cmd] {e}")
 
-# --- DMで回答受信 ---
+# --- DMで回答受信 & 通常メッセージ処理 ---
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
-
-    # チャンネルでの発言はコマンド処理に委譲
-    await bot.process_commands(message)
 
     # DMでクイズ回答受付
     if isinstance(message.channel, discord.DMChannel):
@@ -247,7 +244,6 @@ async def on_message(message):
             user_answer = message.content.strip()
             correct_answer = active_quiz["answer"].strip()
 
-            # 正解判定（大文字小文字・前後空白無視）
             if user_answer.lower() == correct_answer.lower():
                 result = "正解！おめでとう🎉"
             else:
@@ -255,54 +251,19 @@ async def on_message(message):
 
             active_quiz["answered_users"].add(str(message.author.id))
 
-            # 答え合わせをクイズチャンネルに送信
             channel = bot.get_channel(active_quiz["channel_id"])
             if channel:
                 await channel.send(f"{message.author.mention} さんの回答: 「{user_answer}」 → {result}")
 
-            # 全員が回答したらリセット
-            # ここは単純に10人でリセットの例、必要ならカスタムしてください
+            # 回答人数上限（例10人）に達したらクイズ終了
+            # 必要に応じて変更可能
             if len(active_quiz["answered_users"]) >= 10:
                 active_quiz = None
-                await channel.send("クイズ終了！またね！")
+                if channel:
+                    await channel.send("クイズ終了！またね！")
 
-# --- メイン会話処理 ---
-@bot.event
-async def on_message_edit(before, after):
-    # 編集されたメッセージも処理したい場合に対応
-    await on_message(after)
-
-@bot.event
-async def on_message(message):
-    if message.author.bot:
+            await message.channel.send(result)
         return
-
-    # DMはクイズ回答優先
-    if isinstance(message.channel, discord.DMChannel):
-        # 先にクイズ回答処理（前述）
-        global active_quiz
-        async with quiz_lock:
-            if active_quiz:
-                if str(message.author.id) not in active_quiz["answered_users"]:
-                    user_answer = message.content.strip()
-                    correct_answer = active_quiz["answer"].strip()
-                    if user_answer.lower() == correct_answer.lower():
-                        result = "正解！おめでとう🎉"
-                    else:
-                        result = f"残念、不正解です。正解は「{correct_answer}」です。"
-                    active_quiz["answered_users"].add(str(message.author.id))
-                    channel = bot.get_channel(active_quiz["channel_id"])
-                    if channel:
-                        await channel.send(f"{message.author.mention} さんの回答: 「{user_answer}」 → {result}")
-                    if len(active_quiz["answered_users"]) >= 10:
-                        active_quiz = None
-                        if channel:
-                            await channel.send("クイズ終了！またね！")
-                    await message.channel.send(result)
-                    return
-            else:
-                await message.channel.send("現在クイズはありません。")
-                return
 
     # チャンネルは指定チャンネル限定
     if message.channel.id != ALLOWED_CHANNEL_ID:
@@ -319,22 +280,22 @@ async def on_message(message):
         await message.channel.send(weather_info)
         return
 
-    # ここでGemini返答取得
+    # Gemini返答取得
     reply = await get_gemini_reply(message.author.id, str(message.author), content)
 
-    # 毒舌モードなどのモード別追加加工
+    # モード別文末付加
     if current_mode == "neet":
-        reply = reply + "\n（ニートモードで自虐的に）"
+        reply += "\n（ニートモードで自虐的に）"
     elif current_mode == "debate":
-        reply = reply + "\n（論破モードで反論します）"
+        reply += "\n（論破モードで反論します）"
     elif current_mode == "roast":
-        reply = reply + "\n（超絶煽りモードです）"
+        reply += "\n（超絶煽りモードです）"
     elif current_mode == "tgif":
-        reply = reply + "\n（感謝と神崇拝モード）"
+        reply += "\n（感謝と神崇拝モード）"
 
     await message.channel.send(reply)
 
-# --- 起動 ---
+# --- Bot起動 ---
 if __name__ == "__main__":
     keep_alive()
     bot.run(TOKEN)

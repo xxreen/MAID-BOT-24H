@@ -7,13 +7,14 @@ from threading import Thread
 import google.generativeai as genai
 import asyncio
 import traceback
+import datetime
 
 # --- 設定 ---
 TOKEN = os.getenv("TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OWNER_ID = "1016316997086216222"
-ALLOWED_CHANNEL_ID = 1374589955996778577  # 通常会話チャンネル
-GREETING_CHANNEL_ID = 1370406946812854404  # あいさつ用チャンネル
+ALLOWED_CHANNEL_ID = 1374589955996778577  # 許可されたチャンネルID
+GREETING_CHANNEL_ID = 1370406946812854404  # 挨拶チャンネルID
 
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("models/gemini-1.5-flash")
@@ -34,7 +35,7 @@ def keep_alive():
 intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
-intents.members = True  # 新規メンバー検出用
+intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
@@ -48,6 +49,7 @@ MODES = {
 }
 current_mode = "default"
 active_quizzes = {}
+user_histories = {}
 
 QUIZ_DATA = {
     "アニメ": {
@@ -70,12 +72,12 @@ async def on_ready():
     await tree.sync()
     print(f"ログイン成功: {bot.user}")
 
-# --- 新規メンバー参加時 ---
+# --- 新規メンバー挨拶 ---
 @bot.event
 async def on_member_join(member):
     channel = bot.get_channel(GREETING_CHANNEL_ID)
     if channel:
-        await channel.send(f"ようこそ {member.mention} さん！ここはご主人様が支配する領域ですわ♡ ゆっくりしていってね♪")
+        await channel.send(f"{member.mention} さん、ようこそいらっしゃいましたわ♡")
 
 # --- /mode（ご主人様専用） ---
 @tree.command(name="mode", description="モードを切り替えます（ご主人様専用）")
@@ -102,7 +104,8 @@ async def quiz_cmd(interaction: discord.Interaction, genre: str, difficulty: str
     quiz = random.choice(genre_data[difficulty])
     user_id = str(interaction.user.id)
     active_quizzes[user_id] = {"answer": quiz["answer"], "channel_id": interaction.channel.id}
-    await interaction.user.send(f"問題ですわ♪: {quiz['question']}\n※このDMに答えを返信してね♡")
+    await interaction.user.send(f"問題ですわ♪: {quiz['question']}
+※このDMに答えを返信してね♡")
     await interaction.response.send_message("クイズをDMで送信しましたわ♪", ephemeral=True)
 
 # --- メッセージ応答処理 ---
@@ -111,28 +114,36 @@ async def on_message(message):
     if message.author.bot:
         return
 
+    # 指定されたチャンネルとDMのみ応答
     if not isinstance(message.channel, discord.DMChannel) and message.channel.id != ALLOWED_CHANNEL_ID:
         return
 
     user_id = str(message.author.id)
+    content = message.content.strip()
 
+    # DMでのクイズ解答処理
     if isinstance(message.channel, discord.DMChannel) and user_id in active_quizzes:
         quiz = active_quizzes[user_id]
         answer = quiz["answer"]
         channel = bot.get_channel(quiz["channel_id"])
         if channel:
-            if message.content.strip().lower() == answer.lower():
+            if content.lower() == answer.lower():
                 await channel.send(f"{message.author.name} さんの回答：正解ですわ！お見事ですの♪🎉")
             else:
                 await channel.send(f"{message.author.name} さんの回答：残念ですわ、不正解ですの。正解は「{answer}」でしたわよ。")
         del active_quizzes[user_id]
         return
 
+    # 履歴に保存
+    if user_id not in user_histories:
+        user_histories[user_id] = []
+    user_histories[user_id].append({"time": str(datetime.datetime.now()), "text": content})
+    if len(user_histories[user_id]) > 5:
+        user_histories[user_id] = user_histories[user_id][-5:]
+
+    # Gemini応答生成
     if user_id == OWNER_ID:
-        prefix = (
-            "ご主人様ぁ♡ いつもお疲れ様ですわ♡ どんなお話でも全力でお応えしますから、"
-            "なんでも聞いてくださいませ〜っ♪ にゃん♡ → "
-        )
+        prefix = "ご主人様ぁ♡ いつもお疲れ様ですわ♡ どんなお話でもお応えしますから、何でも聞いてくださいませ〜っ♪ → "
     else:
         mode = current_mode
         if mode == "tgif":
@@ -146,7 +157,19 @@ async def on_message(message):
         else:
             prefix = "またくだらないこと聞いてきたの？仕方ないから答えてあげるわ。→ "
 
-    prompt = prefix + message.content
+    prompt = prefix + content
+
+    # 曖昧な地名対応（代表値で応答）
+    if "天気" in content:
+        if "日本" in content:
+            prompt += "
+→ 東京の天気をお伝えします。"
+        elif "フィリピン" in content:
+            prompt += "
+→ セブの天気をお伝えします。"
+        elif "今日" in content or "今" in content:
+            prompt += "
+→ 地域が指定されていませんが、東京の情報をお伝えします。"
 
     try:
         loop = asyncio.get_event_loop()

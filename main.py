@@ -1,4 +1,4 @@
-impport discord
+import discord
 from discord.ext import commands
 import os
 import random
@@ -19,8 +19,13 @@ ALLOWED_CHANNEL_ID = 1374589955996778577  # 動作許可チャンネルID
 WELCOME_CHANNEL_ID = 1370406946812854404  # 新メンバー歓迎チャンネルID
 
 # --- Gemini初期化 ---
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("models/gemini-1.5-flash")
+# APIキーがない場合は初期化をスキップ、またはエラーメッセージを出す
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel("gemini-1.5-flash") # モデル名を指定
+else:
+    print("[WARN] GEMINI_API_KEY が設定されていません。Gemini API は利用できません。")
+    model = None # APIキーがない場合はモデルをNoneにする
 
 # --- Flask keep_alive ---
 app = Flask(__name__)
@@ -39,7 +44,6 @@ def keep_alive():
 # --- Discord Bot初期化 ---
 intents = discord.Intents.default()
 intents.members = True
-intents.messages = True
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
@@ -53,7 +57,7 @@ MODES = {
     "tgif": "神崇拝モード（感謝）"
 }
 current_mode = "default"
-conversation_history = {}
+conversation_history = {} # この変数は現在のコードでは使われていないようです
 active_quiz = None
 quiz_lock = asyncio.Lock()
 
@@ -93,18 +97,27 @@ QUIZ_QUESTIONS = {
 # --- 天気取得関数 ---
 async def get_weather(city_name: str):
     if not OPENWEATHERMAP_API_KEY:
-        return "APIキー未設定"
+        return "OpenWeatherMap API キーが設定されていません。"
     url = f"http://api.openweathermap.org/data/2.5/weather?q={city_name}&appid={OPENWEATHERMAP_API_KEY}&lang=ja&units=metric"
     async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
-            if resp.status != 200:
-                return f"{city_name}の情報なし"
-            data = await resp.json()
-            weather_desc = data['weather'][0]['description']
-            temp = data['main']['temp']
-            humidity = data['main']['humidity']
-            wind_speed = data['wind']['speed']
-            return f"{city_name} 天気: {weather_desc} 気温: {temp}℃ 湿度: {humidity}% 風速: {wind_speed}m/s"
+        try:
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    print(f"[ERROR Weather API] HTTP Status: {resp.status}, Response: {await resp.text()}")
+                    return f"ごめんなさい、{city_name}の天気情報が見つかりませんでした。"
+                data = await resp.json()
+                weather_desc = data['weather'][0]['description']
+                temp = data['main']['temp']
+                humidity = data['main']['humidity']
+                wind_speed = data['wind']['speed']
+                return f"{city_name}の天気: {weather_desc}, 気温: {temp}℃, 湿度: {humidity}%, 風速: {wind_speed}m/s"
+        except aiohttp.ClientError as e:
+            print(f"[ERROR Weather API] ネットワークエラー: {e}")
+            return "ごめんなさい、天気情報の取得中にネットワークエラーが発生しました。"
+        except Exception as e:
+            print(f"[ERROR Weather API] 予期せぬエラー: {e}")
+            return "ごめんなさい、天気情報の取得中に予期せぬエラーが発生しました。"
+
 
 def extract_city_from_weather_query(text: str):
     match = re.search(r"([^\s]+)の天気", text)
@@ -112,6 +125,10 @@ def extract_city_from_weather_query(text: str):
 
 # --- Gemini返答取得 ---
 async def get_gemini_reply(user_id: int, user_name: str, content: str):
+    # Geminiモデルが初期化されていない場合はエラーを返す
+    if model is None:
+        return "ごめんなさい、Gemini API キーが設定されていないため返答できません。"
+
     is_owner = str(user_id) == OWNER_ID
 
     if is_owner:
@@ -126,22 +143,24 @@ async def get_gemini_reply(user_id: int, user_name: str, content: str):
             "面白く軽快な毒舌で返答してください。"
         )
 
-    messages = [
-        {"role": "system", "content": system_msg},
-        {"role": "user", "content": f"{user_name}「{content}」に返答してください。短く簡潔に。"}
-    ]
-
     try:
-        response = await model.chat(
-            messages=messages,
-            temperature=0.7,
-            model="models/gemini-1.5-flash"
-        )
-        reply = response.last.message['content']
+        # chat() メソッドではなく start_chat() と send_message_async() を使って会話セッションを作成
+        # system_msg はチャットのhistoryの先頭に役割として含める
+        chat_session = model.start_chat(history=[
+            {"role": "user", "parts": system_msg},
+            {"role": "model", "parts": "はい、かしこまりました。"}, # モデルがシステムメッセージを理解したと仮定する応答
+        ])
+
+        # ユーザーのメッセージを送信
+        response = await chat_session.send_message_async(content)
+        reply = response.text
         return reply.strip()
+    except genai.APIError as e:
+        print(f"[ERROR Gemini API] Gemini API エラーが発生しました: {e}")
+        return "ごめんなさい、Gemini API との通信に問題が発生しました。時間をおいてもう一度お試しください。"
     except Exception as e:
-        print(f"[ERROR Gemini API] {e}")
-        return "ごめんなさい、今はうまく返せません。"
+        print(f"[ERROR Gemini API] 予期せぬエラーが発生しました: {e}")
+        return "ごめんなさい、今はうまく返せません。（内部エラー）"
 
 # --- Bot起動 ---
 @bot.event
@@ -174,7 +193,7 @@ async def mode_cmd(interaction: discord.Interaction, mode: str):
             current_mode = mode
             await interaction.response.send_message(f"モード：{MODES[mode]}", ephemeral=True)
         else:
-            await interaction.response.send_message(f"無効なモード: {', '.join(MODES.keys())}", ephemeral=True)
+            await interaction.response.send_message(f"無効なモードです。選択肢: {', '.join(MODES.keys())}", ephemeral=True)
     except Exception as e:
         print(f"[ERROR mode_cmd] {e}")
 
@@ -195,16 +214,16 @@ async def difficulty_autocomplete(interaction: discord.Interaction, current: str
 async def quiz_cmd(interaction: discord.Interaction, genre: str, difficulty: str):
     try:
         if interaction.channel.id != ALLOWED_CHANNEL_ID:
-            await interaction.response.send_message("指定チャンネルでのみ", ephemeral=True)
+            await interaction.response.send_message("このコマンドは指定チャンネルでのみ使用できます。", ephemeral=True)
             return
         if genre not in QUIZ_QUESTIONS or difficulty not in ["easy", "normal", "hard"]:
-            await interaction.response.send_message("無効なジャンルまたは難易度", ephemeral=True)
+            await interaction.response.send_message("無効なジャンルまたは難易度です。", ephemeral=True)
             return
 
         global active_quiz
         async with quiz_lock:
             if active_quiz:
-                await interaction.response.send_message("他クイズ実行中", ephemeral=True)
+                await interaction.response.send_message("現在、他のクイズが実行中です。終了までお待ちください。", ephemeral=True)
                 return
 
             question_data = random.choice(QUIZ_QUESTIONS[genre][difficulty])
@@ -217,12 +236,16 @@ async def quiz_cmd(interaction: discord.Interaction, genre: str, difficulty: str
                 "difficulty": difficulty,
                 "answered_users": set()
             }
+            # ephemeral=False に変更
             await interaction.response.send_message(
-                f"{interaction.channel.mention} みんなにクイズ！ジャンル:{genre} 難易度:{difficulty}\n"
-                f"問題: {question_data['q']}\n"
-                f"回答はDMで送ってね！", ephemeral=False)
+                f"🎉 {interaction.channel.mention} みんなにクイズ！\n"
+                f"📚 **ジャンル:** {genre} | ⭐ **難易度:** {difficulty}\n"
+                f"❓ **問題:** {question_data['q']}\n"
+                f"📢 **回答はDMで送ってね！**"
+            )
     except Exception as e:
         print(f"[ERROR quiz_cmd] {e}")
+        await interaction.response.send_message("クイズの開始中にエラーが発生しました。", ephemeral=True) # エラー時にも応答
 
 # --- DMで回答受信 & 通常メッセージ処理 ---
 @bot.event
@@ -235,37 +258,40 @@ async def on_message(message):
         global active_quiz
         async with quiz_lock:
             if not active_quiz:
-                await message.channel.send("現在クイズはありません。")
+                await message.channel.send("現在、進行中のクイズはありません。")
                 return
+            # 回答済みのユーザーかを文字列で比較
             if str(message.author.id) in active_quiz["answered_users"]:
-                await message.channel.send("すでに回答しています。")
+                await message.channel.send("あなたはすでにこのクイズに回答しています。")
                 return
 
             user_answer = message.content.strip()
             correct_answer = active_quiz["answer"].strip()
 
             if user_answer.lower() == correct_answer.lower():
-                result = "正解！おめでとう🎉"
+                result = "✨正解！おめでとうございます！🎉"
             else:
-                result = f"残念、不正解です。正解は「{correct_answer}」です。"
+                result = f"残念、不正解です...。正解は「**{correct_answer}**」でした。"
 
             active_quiz["answered_users"].add(str(message.author.id))
 
+            # クイズが出題されたチャンネルに結果を通知
             channel = bot.get_channel(active_quiz["channel_id"])
             if channel:
                 await channel.send(f"{message.author.mention} さんの回答: 「{user_answer}」 → {result}")
 
             # 回答人数上限（例10人）に達したらクイズ終了
             # 必要に応じて変更可能
-            if len(active_quiz["answered_users"]) >= 10:
-                active_quiz = None
+            # ここはクイズの終了条件をより柔軟にするか、タイムアウトを導入すると良い
+            if len(active_quiz["answered_users"]) >= 10: # 例として10人
+                active_quiz = None # クイズを終了
                 if channel:
-                    await channel.send("クイズ終了！またね！")
+                    await channel.send("🏆 クイズ終了！たくさんのご回答ありがとうございました！またね！")
 
-            await message.channel.send(result)
+            await message.channel.send(result) # DMにも結果を返信
         return
 
-    # チャンネルは指定チャンネル限定
+    # チャンネルは指定チャンネル限定 (ALLOWED_CHANNEL_ID)
     if message.channel.id != ALLOWED_CHANNEL_ID:
         return
 
@@ -299,3 +325,4 @@ async def on_message(message):
 if __name__ == "__main__":
     keep_alive()
     bot.run(TOKEN)
+

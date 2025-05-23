@@ -1,44 +1,50 @@
-import os
-import random
-import time
-import asyncio
-from flask import Flask
-from threading import Thread
 import discord
 from discord.ext import commands
 import google.generativeai as genai
+import os
+import asyncio
+import time
+from flask import Flask
+from threading import Thread
 
-# Flaskサーバー
-app = Flask(__name__)
-@app.route('/')
-def home():
-    return "Bot is running!"
-
-def run():
-    app.run(host='0.0.0.0', port=8080)
-
-Thread(target=run).start()
-
-# 環境変数
-DISCORD_TOKEN = os.getenv("TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# --- Discord & Gemini設定 ---
 OWNER_ID = "1016316997086216222"
 TARGET_CHANNEL_ID = 1374589955996778577
 
-# Gemini設定
+DISCORD_TOKEN = os.getenv("TOKEN")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("models/gemini-1.5-flash")
 
-# Bot初期化
+# --- Flask Webサーバー ---
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot is alive!"
+
+def run_web():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run_web)
+    t.start()
+
+# --- Discord Bot設定 ---
 intents = discord.Intents.default()
+intents.messages = True
 intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+intents.dm_messages = True
 
-tree = bot.tree
+bot = commands.Bot(command_prefix="/", intents=intents)
 
-user_modes = {}
-user_memory = {}
+# --- 会話履歴 & モード管理 ---
 user_last_request = {}
+user_memory = {}
+user_modes = {}
+quiz_sessions = {}  # user_id:str -> dict(answer:str, channel_id:int)
 COOLDOWN_SECONDS = 5
 
 MODES = {
@@ -46,101 +52,141 @@ MODES = {
     "neet": "ニートモード（自虐）",
     "debate": "論破モード",
     "roast": "超絶煽りモード",
-    "tgif": "神崇拝モード（感謝）"
+    "tgif": "神崇拝モード（感謝）",
 }
 
-QUIZZES = {
-    "anime": {
-        "easy": ["アニメ『ドラえもん』で未来から来た猫型ロボットの名前は？|ドラえもん"],
-        "normal": ["アニメ『進撃の巨人』で巨人化する主人公の名前は？|エレン"],
-        "hard": ["アニメ『シュタインズ・ゲート』で使われた電話レンジ(仮)の正体は？|タイムマシン"],
-    },
-    "math": {
-        "easy": ["1+1は？|2"],
-        "normal": ["√49は？|7"],
-        "hard": ["eの自然対数は？|1"],
-    },
-    "japanese": {
-        "easy": ["「ありがとう」の丁寧な言い方は？|ありがとうございます"],
-        "normal": ["『走れメロス』の作者は？|太宰治"],
-        "hard": ["『枕草子』の作者は？|清少納言"],
-    },
-    "science": {
-        "easy": ["水の化学式は？|H2O"],
-        "normal": ["太陽の主な構成元素は？|水素"],
-        "hard": ["光速はおよそ何m/s？|3×10^8"],
-    },
-    "social": {
-        "easy": ["日本の首都は？|東京"],
-        "normal": ["明治維新は何年？|1868"],
-        "hard": ["大化の改新が起こった年は？|645"],
+# --- モード切替コマンド ---
+@bot.command()
+async def mode(ctx, *, mode_name=None):
+    user_id = str(ctx.author.id)
+    if mode_name and mode_name in MODES:
+        user_modes[user_id] = mode_name
+        await ctx.send(f"モードを『{MODES[mode_name]}』に切り替えました。")
+    else:
+        current = MODES.get(user_modes.get(user_id, "default"))
+        await ctx.send(f"現在のモードは『{current}』です。\n利用可能なモード: {', '.join(MODES.values())}")
+
+# --- クイズコマンド ---
+@bot.command()
+async def quiz(ctx, genre: str = None, difficulty: str = None):
+    genre = genre.lower() if genre else ""
+    difficulty = difficulty.lower() if difficulty else ""
+    # シンプルにアニメジャンル・難易度別問題サンプル
+    quiz_data = {
+        "anime": {
+            "easy": ("主人公の名前は？", "タロウ"),
+            "normal": ("このアニメの制作会社は？", "スタジオジブリ"),
+            "hard": ("このキャラの初登場話数は？", "12"),
+        },
+        "math": {
+            "easy": ("2 + 2 は？", "4"),
+            "normal": ("√16 は？", "4"),
+            "hard": ("微分の公式は？", "d/dx"),
+        },
+        # 他ジャンルも同様に追加可能
     }
-}
+    if genre not in quiz_data or difficulty not in quiz_data[genre]:
+        await ctx.send("ジャンルまたは難易度が無効です。例: `/quiz anime easy`")
+        return
+    question, answer = quiz_data[genre][difficulty]
+    quiz_sessions[str(ctx.author.id)] = {"answer": answer, "channel_id": ctx.channel.id}
+    await ctx.send(f"クイズ開始！質問: {question}\n答えは**DM**に送ってください。")
 
-@tree.command(name="mode", description="モードを切り替えます")
-@discord.app_commands.describe(mode_name="default, neet, debate, roast, tgif")
-async def mode(interaction: discord.Interaction, mode_name: str):
-    if mode_name in MODES:
-        user_modes[str(interaction.user.id)] = mode_name
-        await interaction.response.send_message(f"{MODES[mode_name]}に切り替えました。")
-    else:
-        await interaction.response.send_message("モードが無効です。default, neet, debate, roast, tgifから選んでください。")
-
-@tree.command(name="quiz", description="ジャンルと難易度を選んでクイズに挑戦！")
-@discord.app_commands.describe(genre="anime, math, japanese, science, social", difficulty="easy, normal, hard")
-async def quiz(interaction: discord.Interaction, genre: str, difficulty: str):
-    genre = genre.lower()
-    difficulty = difficulty.lower()
-    if genre in QUIZZES and difficulty in QUIZZES[genre]:
-        q_and_a = random.choice(QUIZZES[genre][difficulty])
-        q, a = q_and_a.split("|")
-        await interaction.response.send_message(f"**クイズ ({genre}/{difficulty})**\n{q}\n答えはDMで送ってね！")
-    else:
-        await interaction.response.send_message("ジャンルまたは難易度が無効です。")
-
-async def generate_response(message_content: str, user_id: str, author: str):
+# --- Gemini応答生成関数 ---
+async def generate_response(message_content: str, author_id: str, author_name: str) -> str:
     now = time.time()
-    if user_id in user_last_request and now - user_last_request[user_id] < COOLDOWN_SECONDS:
-        return "クールダウン中です、ちょっと待ってね。"
-    user_last_request[user_id] = now
+    if author_id in user_last_request and now - user_last_request[author_id] < COOLDOWN_SECONDS:
+        return "ちょっと待ちな。クールダウン中だよ。"
 
-    memory = user_memory.get(user_id, [])
-    memory.append(f"{author}: {message_content}")
-    user_memory[user_id] = memory[-10:]
+    user_last_request[author_id] = now
+    history = user_memory.get(author_id, [])
+    history.append(f"{author_name}: {message_content}")
+    user_memory[author_id] = history[-10:]
 
-    mode = user_modes.get(user_id, "default")
+    memory_text = "\n".join(history)
+    mode = user_modes.get(author_id, "default")
 
-    if user_id == OWNER_ID:
-        prompt = f"あなたは甘々な従順キャラの女の子。ご主人様からの指示：{message_content}\nあなた:"
+    if author_id == OWNER_ID:
+        prompt = (
+            "あなたは可愛い女の子キャラで、ご主人様に従順です。返答は甘く簡潔にしてください。\n"
+            f"会話履歴:\n{memory_text}\n\nご主人様: {message_content}\nあなた:"
+        )
     elif mode == "neet":
-        prompt = f"あなたはニートで自虐的。内容：{message_content}\nあなた:"
+        prompt = (
+            "あなたは自分をニートと自覚している自虐系毒舌AIです。返答は皮肉混じりで簡潔にしてください。\n"
+            f"会話履歴:\n{memory_text}\n\n相手: {message_content}\nあなた:"
+        )
     elif mode == "debate":
-        prompt = f"あなたは論破大好きなAI。相手：{message_content}\nあなた:"
+        prompt = (
+            "あなたは論破モードの毒舌AIです。相手の発言の矛盾点や過去の発言を利用して痛いところを突いてください。\n"
+            f"会話履歴:\n{memory_text}\n\n相手: {message_content}\nあなた:"
+        )
     elif mode == "roast":
-        prompt = f"あなたは皮肉と煽り全開のAI。発言：{message_content}\nあなた:"
+        prompt = (
+            "あなたは超絶煽りモードの毒舌AIです。相手を論理と皮肉で叩きのめしてください。ただし暴力的脅迫やBANされる内容は禁止です。\n"
+            f"会話履歴:\n{memory_text}\n\n相手: {message_content}\nあなた:"
+        )
     elif mode == "tgif":
-        prompt = f"あなたは神を崇拝し、全てに感謝するAI。会話内容：{message_content}\nあなた:"
+        prompt = (
+            "あなたは神聖なるAIで、あらゆる存在に感謝を捧げ、神を崇拝しています。返答は敬虔で神聖な口調にしてください。\n"
+            f"会話履歴:\n{memory_text}\n\n民: {message_content}\nあなた:"
+        )
     else:
-        prompt = f"あなたは毒舌で皮肉屋。発言：{message_content}\nあなた:"
+        prompt = (
+            "あなたは毒舌で、皮肉混じりの簡潔な返答をするAIです。\n"
+            f"会話履歴:\n{memory_text}\n\n相手: {message_content}\nあなた:"
+        )
 
     try:
         response = await asyncio.to_thread(model.generate_content, [prompt])
         return response.text.strip()
     except Exception as e:
         print("Geminiエラー:", e)
-        return "AIが調整中みたい。しばらくしてからもう一度お願い。"
+        return "しっかり返答はするものの…エラーが発生しました。GEMINIが休憩中なのかもね。"
 
+# --- メッセージイベント ---
 @bot.event
 async def on_message(message):
-    if message.author.bot or message.channel.id != TARGET_CHANNEL_ID:
+    if message.author.bot:
         return
-    await bot.process_commands(message)
-    response = await generate_response(message.content, str(message.author.id), message.author.name)
-    await message.channel.send(response)
 
+    if message.guild is None:
+        # DMメッセージ受信時（クイズ答え判定）
+        user_id = str(message.author.id)
+        if user_id in quiz_sessions:
+            session = quiz_sessions[user_id]
+            correct_answer = session["answer"]
+            user_answer = message.content.strip()
+
+            channel = bot.get_channel(session["channel_id"])
+            if user_answer.lower() == correct_answer.lower():
+                await channel.send(f"{message.author.mention} 正解です！おめでとうございます！")
+                await message.channel.send("正解です！おめでとうございます！")
+                del quiz_sessions[user_id]
+            else:
+                await channel.send(f"{message.author.mention} 残念、不正解です。もう一度挑戦してください。")
+                await message.channel.send("残念、不正解です。もう一度挑戦してください。")
+        else:
+            await message.channel.send("現在クイズは出題されていません。")
+    else:
+        # 通常チャンネルはコマンド処理とGemini応答
+        if message.content.startswith("/"):
+            await bot.process_commands(message)
+            return
+
+        if message.channel.id != TARGET_CHANNEL_ID:
+            return
+
+        reply = await generate_response(message.content, str(message.author.id), message.author.name)
+        await message.channel.send(reply)
+
+# --- 起動イベント ---
 @bot.event
 async def on_ready():
-    await tree.sync()
-    print(f"✅ ログイン成功: {bot.user}")
+    print(f"ログイン成功: {bot.user}")
+    print("起動しました！")
 
-bot.run(DISCORD_TOKEN)
+# --- メイン起動 ---
+if __name__ == "__main__":
+    keep_alive()
+    bot.run(DISCORD_TOKEN)

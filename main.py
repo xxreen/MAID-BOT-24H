@@ -108,26 +108,35 @@ def extract_city_from_weather_query(text: str):
 
 @bot.event
 async def on_ready():
-    await tree.sync()
-    print(f"Logged in as {bot.user}")
+    try:
+        await tree.sync()
+        print(f"Logged in as {bot.user}")
+    except Exception as e:
+        print(f"[ERROR on_ready] {e}")
 
 @bot.event
 async def on_member_join(member):
-    channel = bot.get_channel(WELCOME_CHANNEL_ID)
-    if channel:
-        await channel.send(f"{member.mention} ようこそ。")
+    try:
+        channel = bot.get_channel(WELCOME_CHANNEL_ID)
+        if channel:
+            await channel.send(f"{member.mention} ようこそ。")
+    except Exception as e:
+        print(f"[ERROR on_member_join] {e}")
 
 @tree.command(name="mode", description="モード切替（主専用）")
 async def mode_cmd(interaction: discord.Interaction, mode: str):
-    if str(interaction.user.id) != OWNER_ID:
-        await interaction.response.send_message("主専用", ephemeral=True)
-        return
-    global current_mode
-    if mode in MODES:
-        current_mode = mode
-        await interaction.response.send_message(f"モード：{MODES[mode]}", ephemeral=True)
-    else:
-        await interaction.response.send_message(f"無効なモード: {', '.join(MODES.keys())}", ephemeral=True)
+    try:
+        if str(interaction.user.id) != OWNER_ID:
+            await interaction.response.send_message("主専用", ephemeral=True)
+            return
+        global current_mode
+        if mode in MODES:
+            current_mode = mode
+            await interaction.response.send_message(f"モード：{MODES[mode]}", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"無効なモード: {', '.join(MODES.keys())}", ephemeral=True)
+    except Exception as e:
+        print(f"[ERROR mode_cmd] {e}")
 
 # --- autocomplete用非同期関数 ---
 async def genre_autocomplete(interaction: discord.Interaction, current: str):
@@ -147,68 +156,77 @@ async def difficulty_autocomplete(interaction: discord.Interaction, current: str
 @discord.app_commands.describe(genre="ジャンル", difficulty="難易度")
 @discord.app_commands.autocomplete(genre=genre_autocomplete, difficulty=difficulty_autocomplete)
 async def quiz_cmd(interaction: discord.Interaction, genre: str, difficulty: str):
-    if interaction.channel.id != ALLOWED_CHANNEL_ID:
-        await interaction.response.send_message("指定チャンネルでのみ", ephemeral=True)
-        return
-    if genre not in QUIZ_QUESTIONS or difficulty not in ["easy", "normal", "hard"]:
-        await interaction.response.send_message("無効なジャンルまたは難易度", ephemeral=True)
-        return
-
-    global active_quiz
-    async with quiz_lock:
-        if active_quiz:
-            await interaction.response.send_message("他クイズ実行中", ephemeral=True)
+    try:
+        if interaction.channel.id != ALLOWED_CHANNEL_ID:
+            await interaction.response.send_message("指定チャンネルでのみ", ephemeral=True)
+            return
+        if genre not in QUIZ_QUESTIONS or difficulty not in ["easy", "normal", "hard"]:
+            await interaction.response.send_message("無効なジャンルまたは難易度", ephemeral=True)
             return
 
-        question_data = random.choice(QUIZ_QUESTIONS[genre][difficulty])
-        active_quiz = {
-            "channel_id": interaction.channel.id,
-            "question": question_data["q"],
-            "answer": question_data["a"],
-            "asker_id": interaction.user.id,
-            "genre": genre,
-            "difficulty": difficulty,
-            "answered_users": set()
-        }
-        await interaction.response.send_message(
-            f"{interaction.channel.mention} クイズ！答えはDMで！\n問題：{active_quiz['question']}")
+        global active_quiz
+        async with quiz_lock:
+            if active_quiz:
+                await interaction.response.send_message("他クイズ実行中", ephemeral=True)
+                return
+
+            question_data = random.choice(QUIZ_QUESTIONS[genre][difficulty])
+            active_quiz = {
+                "channel_id": interaction.channel.id,
+                "question": question_data["q"],
+                "answer": question_data["a"],
+                "asker_id": interaction.user.id,
+                "genre": genre,
+                "difficulty": difficulty,
+                "answered_users": set()
+            }
+            await interaction.response.send_message(
+                f"{interaction.channel.mention} クイズ！答えはDMで！\n問題：{active_quiz['question']}")
+    except Exception as e:
+        print(f"[ERROR quiz_cmd] {e}")
 
 @tree.command(name="weather", description="天気情報")
 async def weather_cmd(interaction: discord.Interaction, query: str):
-    city = extract_city_from_weather_query(query)
-    if not city:
-        await interaction.response.send_message("「○○の天気」と入力", ephemeral=True)
-        return
-    info = await get_weather(city)
-    await interaction.response.send_message(info)
+    try:
+        city = extract_city_from_weather_query(query)
+        if not city:
+            await interaction.response.send_message("「○○の天気」と入力", ephemeral=True)
+            return
+        info = await get_weather(city)
+        await interaction.response.send_message(info)
+    except Exception as e:
+        print(f"[ERROR weather_cmd] {e}")
 
 @bot.event
 async def on_message(message):
-    if message.author.bot:
-        return
+    try:
+        if message.author.bot:
+            return
 
-    global active_quiz
+        global active_quiz
 
-    # 禁止ワードのチェックは全モードで無効化（BOTの発言も簡潔に）
+        # 禁止ワードのチェックは全モードで無効化（BOTの発言も簡潔に）
 
-    if isinstance(message.channel, discord.DMChannel) and active_quiz:
-        async with quiz_lock:
-            if message.author.id in active_quiz["answered_users"]:
-                await message.channel.send("回答済")
-                return
+        if isinstance(message.channel, discord.DMChannel) and active_quiz:
+            async with quiz_lock:
+                if message.author.id in active_quiz["answered_users"]:
+                    await message.channel.send("回答済")
+                    return
 
-            user_answer = message.content.strip().lower()
-            correct_answer = active_quiz["answer"].strip().lower()
+                user_answer = message.content.strip().lower()
+                correct_answer = active_quiz["answer"].strip().lower()
 
-            result = "正解" if user_answer == correct_answer else f"不正解 正：{active_quiz['answer']}"
-            active_quiz["answered_users"].add(message.author.id)
+                result = "正解" if user_answer == correct_answer else f"不正解 正：{active_quiz['answer']}"
+                active_quiz["answered_users"].add(message.author.id)
 
-            await message.channel.send(result)
-            channel = bot.get_channel(active_quiz["channel_id"])
-            if channel:
-                await channel.send(f"{message.author.mention} 回答: {message.content}\n結果: {result}")
-    else:
-        await bot.process_commands(message)
+                await message.channel.send(result)
+                channel = bot.get_channel(active_quiz["channel_id"])
+                if channel:
+                    await channel.send(f"{message.author.mention} 回答: {message.content}\n結果: {result}")
+        else:
+            await bot.process_commands(message)
+    except Exception as e:
+        print(f"[ERROR on_message] {e}")
 
 if __name__ == "__main__":
     keep_alive()

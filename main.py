@@ -137,6 +137,7 @@ async def get_gemini_reply(user_id: int, user_name: str, content: str):
         system_msg = (
             "あなたは優しいメイドです。ご主人様には親切で丁寧に優しく接してください。"
             "禁止用語は絶対に使わず、簡潔に答えてください。"
+            "**返答の最後に「ご主人様♡」のような短い記号を含んだ愛らしい語尾を、会話の状況や内容に応じて臨機応変に、自然なタイミングで付けてください。**" # ここを修正
         )
     else:
         if current_mode == "default": # 毒舌AIモード
@@ -180,8 +181,13 @@ async def get_gemini_reply(user_id: int, user_name: str, content: str):
         ])
 
         response = await chat_session.send_message_async(content)
-        reply = response.text
-        return reply.strip()
+        reply = response.text.strip() # ここでstrip()して余計な空白を削除
+
+        # ご主人様への返答に語尾を追加する処理を削除
+        # if is_owner:
+        #     reply += "ご主人様♡"
+
+        return reply
     except genai.APIError as e:
         print(f"[ERROR Gemini API] Gemini API エラーが発生しました: {e}")
         return "ごめんなさい、Gemini API との通信に問題が発生しました。時間をおいてもう一度お試しください。"
@@ -331,4 +337,3 @@ async def on_message(message):
 if __name__ == "__main__":
     keep_alive()
     bot.run(TOKEN)
-

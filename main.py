@@ -12,7 +12,8 @@ import traceback
 TOKEN = os.getenv("TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OWNER_ID = "1016316997086216222"
-ALLOWED_CHANNEL_ID = 1374589955996778577  # 許可されたチャンネルID
+ALLOWED_CHANNEL_ID = 1374589955996778577  # 通常会話チャンネル
+GREETING_CHANNEL_ID = 1370406946812854404  # あいさつ用チャンネル
 
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("models/gemini-1.5-flash")
@@ -33,6 +34,7 @@ def keep_alive():
 intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
+intents.members = True  # 新規メンバー検出用
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
@@ -68,6 +70,13 @@ async def on_ready():
     await tree.sync()
     print(f"ログイン成功: {bot.user}")
 
+# --- 新規メンバー参加時 ---
+@bot.event
+async def on_member_join(member):
+    channel = bot.get_channel(GREETING_CHANNEL_ID)
+    if channel:
+        await channel.send(f"ようこそ {member.mention} さん！ここはご主人様が支配する領域ですわ♡ ゆっくりしていってね♪")
+
 # --- /mode（ご主人様専用） ---
 @tree.command(name="mode", description="モードを切り替えます（ご主人様専用）")
 async def mode_cmd(interaction: discord.Interaction, mode: str):
@@ -102,13 +111,11 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    # 指定されたチャンネルとDMのみ応答
     if not isinstance(message.channel, discord.DMChannel) and message.channel.id != ALLOWED_CHANNEL_ID:
         return
 
     user_id = str(message.author.id)
 
-    # DMでのクイズ解答処理
     if isinstance(message.channel, discord.DMChannel) and user_id in active_quizzes:
         quiz = active_quizzes[user_id]
         answer = quiz["answer"]
@@ -121,7 +128,6 @@ async def on_message(message):
         del active_quizzes[user_id]
         return
 
-    # Gemini応答生成
     if user_id == OWNER_ID:
         prefix = (
             "ご主人様ぁ♡ いつもお疲れ様ですわ♡ どんなお話でも全力でお応えしますから、"
@@ -141,11 +147,6 @@ async def on_message(message):
             prefix = "またくだらないこと聞いてきたの？仕方ないから答えてあげるわ。→ "
 
     prompt = prefix + message.content
-
-    # トークン制限対策（約1000文字に制限）
-    MAX_PROMPT_LENGTH = 1000
-    if len(prompt) > MAX_PROMPT_LENGTH:
-        prompt = prompt[:MAX_PROMPT_LENGTH] + "…"
 
     try:
         loop = asyncio.get_event_loop()

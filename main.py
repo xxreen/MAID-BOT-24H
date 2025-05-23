@@ -16,7 +16,6 @@ model = genai.GenerativeModel("gemini-pro")
 
 app = Flask(__name__)
 
-# --- Webサーバー ---
 @app.route("/")
 def home():
     return "Bot is running!"
@@ -27,14 +26,12 @@ def run():
 def keep_alive():
     Thread(target=run).start()
 
-# --- Bot初期化 ---
 intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
-# --- モード・クイズ設定 ---
 MODES = {
     "default": "毒舌AIモード",
     "neet": "ニートモード（自虐）",
@@ -60,13 +57,11 @@ QUIZ_DATA = {
     }
 }
 
-# --- 起動時 ---
 @bot.event
 async def on_ready():
     await tree.sync()
     print(f"ログイン成功: {bot.user}")
 
-# --- /modeコマンド ---
 @tree.command(name="mode", description="モードを切り替えます")
 async def mode_cmd(interaction: discord.Interaction, mode: str):
     user_id = str(interaction.user.id)
@@ -77,7 +72,6 @@ async def mode_cmd(interaction: discord.Interaction, mode: str):
         current = MODES.get(user_modes.get(user_id, "default"))
         await interaction.response.send_message(f"現在のモードは『{current}』です。有効なモード: {', '.join(MODES.keys())}", ephemeral=True)
 
-# --- /quizコマンド ---
 @tree.command(name="quiz", description="クイズを出題します")
 async def quiz_cmd(interaction: discord.Interaction, genre: str, difficulty: str):
     genre_data = QUIZ_DATA.get(genre)
@@ -91,7 +85,6 @@ async def quiz_cmd(interaction: discord.Interaction, genre: str, difficulty: str
     await interaction.user.send(f"問題: {quiz['question']}\n※このDMに答えを返信してね！")
     await interaction.response.send_message("クイズをDMで送信しました。", ephemeral=True)
 
-# --- メッセージ応答処理（DM・チャンネル共通） ---
 @bot.event
 async def on_message(message):
     if message.author.bot:
@@ -111,7 +104,6 @@ async def on_message(message):
         del active_quizzes[user_id]
         return
 
-    # Geminiによる通常返信（DM・チャンネル両方）
     is_owner = (user_id == OWNER_ID)
     mode = user_modes.get(user_id, "default")
 
@@ -128,15 +120,18 @@ async def on_message(message):
         prefix = "" if is_owner else "は？バカかお前、"
 
     prompt = prefix + message.content
+    if len(prompt) > 5000:
+        await message.channel.send("メッセージが長すぎるよ。")
+        return
 
     try:
         response = model.generate_content(prompt)
         await message.channel.send(response.text)
     except Exception as e:
+        print(f"Geminiエラー: {e}")
         await message.channel.send("応答に失敗したよ。")
 
     await bot.process_commands(message)
 
-# --- 実行 ---
 keep_alive()
 bot.run(TOKEN)

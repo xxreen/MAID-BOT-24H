@@ -142,6 +142,11 @@ async def on_message(message):
 
     prompt = prefix + message.content
 
+    # トークン制限対策（約1000文字に制限）
+    MAX_PROMPT_LENGTH = 1000
+    if len(prompt) > MAX_PROMPT_LENGTH:
+        prompt = prompt[:MAX_PROMPT_LENGTH] + "…"
+
     try:
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(None, model.generate_content, prompt)

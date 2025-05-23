@@ -129,18 +129,23 @@ async def mode_cmd(interaction: discord.Interaction, mode: str):
     else:
         await interaction.response.send_message(f"無効なモード: {', '.join(MODES.keys())}", ephemeral=True)
 
+# --- autocomplete用非同期関数 ---
+async def genre_autocomplete(interaction: discord.Interaction, current: str):
+    return [
+        discord.app_commands.Choice(name=k, value=k)
+        for k in QUIZ_QUESTIONS.keys() if current.lower() in k.lower()
+    ][:25]
+
+async def difficulty_autocomplete(interaction: discord.Interaction, current: str):
+    options = ["easy", "normal", "hard"]
+    return [
+        discord.app_commands.Choice(name=l, value=l)
+        for l in options if current.lower() in l.lower()
+    ][:25]
+
 @tree.command(name="quiz", description="クイズ出題")
 @discord.app_commands.describe(genre="ジャンル", difficulty="難易度")
-@discord.app_commands.autocomplete(
-    genre=lambda interaction, current: [
-        discord.app_commands.Choice(name=k, value=k)
-        for k in QUIZ_QUESTIONS if current in k
-    ],
-    difficulty=lambda interaction, current: [
-        discord.app_commands.Choice(name=l, value=l)
-        for l in ["easy", "normal", "hard"] if current in l
-    ]
-)
+@discord.app_commands.autocomplete(genre=genre_autocomplete, difficulty=difficulty_autocomplete)
 async def quiz_cmd(interaction: discord.Interaction, genre: str, difficulty: str):
     if interaction.channel.id != ALLOWED_CHANNEL_ID:
         await interaction.response.send_message("指定チャンネルでのみ", ephemeral=True)

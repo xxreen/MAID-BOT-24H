@@ -6,7 +6,6 @@ from flask import Flask
 from threading import Thread
 import google.generativeai as genai
 import asyncio
-import traceback
 import aiohttp
 import re
 
@@ -24,7 +23,7 @@ model = genai.GenerativeModel("models/gemini-1.5-flash")
 app = Flask(__name__)
 @app.route("/")
 def home():
-    return "Bot is running!"
+    return "Bot running"
 
 def run():
     app.run(host="0.0.0.0", port=8080)
@@ -66,27 +65,42 @@ QUIZ_QUESTIONS = {
         "normal": [{"q": "『花鳥風月』の意味は？", "a": "自然の美しさ"}],
         "hard": [{"q": "『枕草子』の作者は？", "a": "清少納言"}],
     },
-    # ... 他ジャンル同様に定義
+    "社会": {
+        "easy": [{"q": "日本の首都は？", "a": "東京"}],
+        "normal": [{"q": "日本の元号で平成の前は？", "a": "昭和"}],
+        "hard": [{"q": "日本の国会は何院制？", "a": "二院制"}],
+    },
+    "理科": {
+        "easy": [{"q": "水の化学式は？", "a": "H2O"}],
+        "normal": [{"q": "地球の衛星は？", "a": "月"}],
+        "hard": [{"q": "元素記号『Fe』は何？", "a": "鉄"}],
+    },
+    "地理": {
+        "easy": [{"q": "富士山の高さは？", "a": "3776m"}],
+        "normal": [{"q": "日本の最南端の島は？", "a": "沖ノ鳥島"}],
+        "hard": [{"q": "ユーラシア大陸の最高峰は？", "a": "エベレスト"}],
+    },
+    "数学": {
+        "easy": [{"q": "2+2は？", "a": "4"}],
+        "normal": [{"q": "円周率の近似値は？", "a": "3.14"}],
+        "hard": [{"q": "微分の記号は？", "a": "d"}],
+    },
 }
 
 async def get_weather(city_name: str):
     if not OPENWEATHERMAP_API_KEY:
-        return "天気APIキーが設定されてません。"
+        return "APIキー未設定"
     url = f"http://api.openweathermap.org/data/2.5/weather?q={city_name}&appid={OPENWEATHERMAP_API_KEY}&lang=ja&units=metric"
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as resp:
             if resp.status != 200:
-                return f"{city_name} の天気情報が取得できませんでした。"
+                return f"{city_name}の情報なし"
             data = await resp.json()
             weather_desc = data['weather'][0]['description']
             temp = data['main']['temp']
             humidity = data['main']['humidity']
             wind_speed = data['wind']['speed']
-            return (f"{city_name} の天気:\n"
-                    f"天気: {weather_desc}\n"
-                    f"気温: {temp}℃\n"
-                    f"湿度: {humidity}%\n"
-                    f"風速: {wind_speed} m/s")
+            return f"{city_name} 天気: {weather_desc} 気温: {temp}℃ 湿度: {humidity}% 風速: {wind_speed}m/s"
 
 def extract_city_from_weather_query(text: str):
     match = re.search(r"([^\s]+)の天気", text)
@@ -95,27 +109,27 @@ def extract_city_from_weather_query(text: str):
 @bot.event
 async def on_ready():
     await tree.sync()
-    print(f"ログイン成功: {bot.user}")
+    print(f"Logged in as {bot.user}")
 
 @bot.event
 async def on_member_join(member):
     channel = bot.get_channel(WELCOME_CHANNEL_ID)
     if channel:
-        await channel.send(f"{member.mention} ようこそ、我が主に仕える地へ……。何か困ったら気軽に声をかけてくださいね。")
+        await channel.send(f"{member.mention} ようこそ。")
 
-@tree.command(name="mode", description="モードを切り替えます（ご主人様専用）")
+@tree.command(name="mode", description="モード切替（主専用）")
 async def mode_cmd(interaction: discord.Interaction, mode: str):
     if str(interaction.user.id) != OWNER_ID:
-        await interaction.response.send_message("このコマンドはご主人様専用ですわ♡", ephemeral=True)
+        await interaction.response.send_message("主専用", ephemeral=True)
         return
     global current_mode
     if mode in MODES:
         current_mode = mode
-        await interaction.response.send_message(f"モードを『{MODES[mode]}』に変更しましたわ♡", ephemeral=True)
+        await interaction.response.send_message(f"モード：{MODES[mode]}", ephemeral=True)
     else:
-        await interaction.response.send_message(f"無効なモードですわ。使えるモード: {', '.join(MODES.keys())}", ephemeral=True)
+        await interaction.response.send_message(f"無効なモード: {', '.join(MODES.keys())}", ephemeral=True)
 
-@tree.command(name="quiz", description="クイズを出題します")
+@tree.command(name="quiz", description="クイズ出題")
 @discord.app_commands.describe(genre="ジャンル", difficulty="難易度")
 @discord.app_commands.autocomplete(
     genre=lambda interaction, current: [
@@ -129,17 +143,16 @@ async def mode_cmd(interaction: discord.Interaction, mode: str):
 )
 async def quiz_cmd(interaction: discord.Interaction, genre: str, difficulty: str):
     if interaction.channel.id != ALLOWED_CHANNEL_ID:
-        await interaction.response.send_message("このコマンドは指定チャンネルでのみ使えます。", ephemeral=True)
+        await interaction.response.send_message("指定チャンネルでのみ", ephemeral=True)
         return
-
     if genre not in QUIZ_QUESTIONS or difficulty not in ["easy", "normal", "hard"]:
-        await interaction.response.send_message("ジャンルまたは難易度が無効です。", ephemeral=True)
+        await interaction.response.send_message("無効なジャンルまたは難易度", ephemeral=True)
         return
 
     global active_quiz
     async with quiz_lock:
         if active_quiz:
-            await interaction.response.send_message("現在他のクイズが進行中です。", ephemeral=True)
+            await interaction.response.send_message("他クイズ実行中", ephemeral=True)
             return
 
         question_data = random.choice(QUIZ_QUESTIONS[genre][difficulty])
@@ -152,16 +165,14 @@ async def quiz_cmd(interaction: discord.Interaction, genre: str, difficulty: str
             "difficulty": difficulty,
             "answered_users": set()
         }
+        await interaction.response.send_message(
+            f"{interaction.channel.mention} クイズ！答えはDMで！\n問題：{active_quiz['question']}")
 
-        await interaction.response.send_message(f"ジャンル：{genre} 難易度：{difficulty}\n"
-                                                f"{interaction.channel.mention} みんな！答えはDMで！\n"
-                                                f"問題：{active_quiz['question']}")
-
-@tree.command(name="weather", description="天気を調べます")
+@tree.command(name="weather", description="天気情報")
 async def weather_cmd(interaction: discord.Interaction, query: str):
     city = extract_city_from_weather_query(query)
     if not city:
-        await interaction.response.send_message("「○○の天気」と入力してください。", ephemeral=True)
+        await interaction.response.send_message("「○○の天気」と入力", ephemeral=True)
         return
     info = await get_weather(city)
     await interaction.response.send_message(info)
@@ -173,22 +184,24 @@ async def on_message(message):
 
     global active_quiz
 
+    # 禁止ワードのチェックは全モードで無効化（BOTの発言も簡潔に）
+
     if isinstance(message.channel, discord.DMChannel) and active_quiz:
         async with quiz_lock:
             if message.author.id in active_quiz["answered_users"]:
-                await message.channel.send("すでに回答しています。")
+                await message.channel.send("回答済")
                 return
 
             user_answer = message.content.strip().lower()
             correct_answer = active_quiz["answer"].strip().lower()
 
-            result = "正解！お見事ですわ♡" if user_answer == correct_answer else f"不正解です。正解は「{active_quiz['answer']}」です。"
+            result = "正解" if user_answer == correct_answer else f"不正解 正：{active_quiz['answer']}"
             active_quiz["answered_users"].add(message.author.id)
 
             await message.channel.send(result)
             channel = bot.get_channel(active_quiz["channel_id"])
             if channel:
-                await channel.send(f"{message.author.mention} さんの回答: {message.content}\n結果: {result}")
+                await channel.send(f"{message.author.mention} 回答: {message.content}\n結果: {result}")
     else:
         await bot.process_commands(message)
 

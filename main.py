@@ -8,13 +8,14 @@ import google.generativeai as genai
 import asyncio
 import aiohttp
 import re
+import traceback
 
 # --- 環境変数取得 ---
 TOKEN = os.getenv("TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OPENWEATHERMAP_API_KEY = os.getenv("OPENWEATHERMAP_API_KEY")
 
-OWNER_ID = "1016316997086216222"  # ご主人様ID（文字列で管理）
+OWNER_ID = "1016316997086216222"  # ご主人様ID（文字列）
 ALLOWED_CHANNEL_ID = 1374589955996778577  # 動作許可チャンネルID
 WELCOME_CHANNEL_ID = 1370406946812854404  # 新メンバー歓迎チャンネルID
 
@@ -24,6 +25,7 @@ model = genai.GenerativeModel("models/gemini-1.5-flash")
 
 # --- Flask keep_alive ---
 app = Flask(__name__)
+
 @app.route("/")
 def home():
     return "Bot running"
@@ -43,7 +45,7 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
-# --- 各種定義 ---
+# --- 定数定義 ---
 MODES = {
     "default": "毒舌AIモード",
     "neet": "ニートモード（自虐）",
@@ -89,7 +91,7 @@ QUIZ_QUESTIONS = {
     },
 }
 
-# --- 天気取得関数 ---
+# --- 天気取得 ---
 async def get_weather(city_name: str):
     if not OPENWEATHERMAP_API_KEY:
         return "APIキー未設定"
@@ -131,18 +133,26 @@ async def get_gemini_reply(user_id: int, user_name: str, content: str):
     ]
 
     try:
-        response = await model.chat(
+        response = await model.chat_async(
             messages=messages,
             temperature=0.7,
             model="models/gemini-1.5-flash"
         )
-        reply = response.last.message['content']
-        return reply.strip()
+        print("[DEBUG] Gemini API response:", response)
+
+        if response and response.last and 'content' in response.last.message:
+            reply = response.last.message['content']
+            return reply.strip()
+        else:
+            print("[WARN] Gemini response missing expected fields")
+            return "ごめんなさい、今はうまく返せません。"
+
     except Exception as e:
         print(f"[ERROR Gemini API] {e}")
+        traceback.print_exc()
         return "ごめんなさい、今はうまく返せません。"
 
-# --- Bot起動 ---
+# --- 起動イベント ---
 @bot.event
 async def on_ready():
     try:
@@ -192,99 +202,89 @@ async def difficulty_autocomplete(interaction: discord.Interaction, current: str
 @discord.app_commands.describe(genre="ジャンル", difficulty="難易度")
 @discord.app_commands.autocomplete(genre=genre_autocomplete, difficulty=difficulty_autocomplete)
 async def quiz_cmd(interaction: discord.Interaction, genre: str, difficulty: str):
-    try:
-        if interaction.channel.id != ALLOWED_CHANNEL_ID:
-            await interaction.response.send_message("指定チャンネルでのみ", ephemeral=True)
-            return
-        if genre not in QUIZ_QUESTIONS or difficulty not in ["easy", "normal", "hard"]:
-            await interaction.response.send_message("無効なジャンルまたは難易度", ephemeral=True)
-            return
-
+    async with quiz_lock:
         global active_quiz
-        async with quiz_lock:
-            if active_quiz:
-                await interaction.response.send_message("他クイズ実行中", ephemeral=True)
-                return
-
-            question_data = random.choice(QUIZ_QUESTIONS[genre][difficulty])
-            active_quiz = {
-                "channel_id": interaction.channel.id,
-                "question": question_data["q"],
-                "answer": question_data["a"],
-                "asker_id": interaction.user.id,
-                "genre": genre,
-                "difficulty": difficulty,
-                "answered_users": set()
-            }
-            await interaction.response.send_message(
-                f"{interaction.channel.mention} クイズ！答えはDMで！\n問題：{active_quiz['question']}")
-    except Exception as e:
-        print(f"[ERROR quiz_cmd] {e}")
-
-# --- 天気コマンド ---
-@tree.command(name="weather", description="天気情報")
-async def weather_cmd(interaction: discord.Interaction, query: str):
-    try:
-        city = extract_city_from_weather_query(query)
-        if not city:
-            await interaction.response.send_message("「○○の天気」と入力してください", ephemeral=True)
+        if active_quiz:
+            await interaction.response.send_message("現在クイズ中です。回答を待ってください。", ephemeral=True)
             return
-        info = await get_weather(city)
-        await interaction.response.send_message(info)
-    except Exception as e:
-        print(f"[ERROR weather_cmd] {e}")
 
-# --- DMでクイズ回答受付 ---
+        genre = genre.capitalize()
+        difficulty = difficulty.lower()
+        if genre not in QUIZ_QUESTIONS:
+            await interaction.response.send_message("無効なジャンルです。", ephemeral=True)
+            return
+        if difficulty not in ["easy", "normal", "hard"]:
+            await interaction.response.send_message("無効な難易度です。", ephemeral=True)
+            return
+
+        question_data = random.choice(QUIZ_QUESTIONS[genre][difficulty])
+        question = question_data["q"]
+        answer = question_data["a"]
+
+        active_quiz = {
+            "channel_id": interaction.channel.id,
+            "question": question,
+            "answer": answer,
+            "asker_id": interaction.user.id,
+            "genre": genre,
+            "difficulty": difficulty,
+            "answered_users": set()
+        }
+
+        mention = interaction.user.mention
+        await interaction.response.send_message(f"{mention} クイズ出題: {question}\n回答はDMで送ってください。")
+
+# --- DMでの回答受付 ---
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
 
-    # クイズ回答受付はDMのみ
     global active_quiz
-    if isinstance(message.channel, discord.DMChannel) and active_quiz:
-        answer = message.content.strip()
-        user_id = message.author.id
 
-        # 答え合わせ
+    if isinstance(message.channel, discord.DMChannel) and active_quiz:
         async with quiz_lock:
-            if user_id in active_quiz.get("answered_users", set()):
-                await message.channel.send("もう回答済みです。")
+            if message.author.id in active_quiz["answered_users"]:
+                await message.channel.send("あなたはすでに回答しています。")
+                return
+            active_quiz["answered_users"].add(message.author.id)
+
+            user_answer = message.content.strip()
+            correct_answer = active_quiz["answer"].strip()
+
+            channel = bot.get_channel(active_quiz["channel_id"])
+            if not channel:
+                await message.channel.send("エラー: 出題チャンネルが見つかりません。")
+                active_quiz = None
                 return
 
-            if answer == active_quiz["answer"]:
-                channel = bot.get_channel(active_quiz["channel_id"])
-                if channel:
-                    await channel.send(f"{message.author.mention} 正解！おめでとう！")
+            if user_answer == correct_answer:
+                await message.channel.send("正解！おめでとうございます。")
+                await channel.send(f"{message.author.mention} さんがクイズに正解しました！ 問: {active_quiz['question']}")
                 active_quiz = None
             else:
-                await message.channel.send("不正解です。")
-            active_quiz["answered_users"].add(user_id)
+                await message.channel.send("残念、不正解です。")
+
         return
 
-    # チャンネル限定処理
+    # --- チャンネル制限 ---
     if message.channel.id != ALLOWED_CHANNEL_ID:
         return
 
-    # モード別動作
-    user_id = message.author.id
-    user_name = message.author.display_name
+    # --- 天気問い合わせ対応 ---
     content = message.content.strip()
+    city = extract_city_from_weather_query(content)
+    if city:
+        weather = await get_weather(city)
+        await message.channel.send(weather)
+        return
 
-    # 天気情報リクエスト判定
-    if "の天気" in content:
-        city = extract_city_from_weather_query(content)
-        if city:
-            weather_info = await get_weather(city)
-            await message.channel.send(weather_info)
-            return
-
-    # Gemini返答取得
-    reply = await get_gemini_reply(user_id, user_name, content)
+    # --- Gemini応答 ---
+    reply = await get_gemini_reply(message.author.id, message.author.display_name, content)
     if reply:
         await message.channel.send(reply)
 
-# --- Bot起動 ---
+# --- メイン実行 ---
 if __name__ == "__main__":
     keep_alive()
     bot.run(TOKEN)

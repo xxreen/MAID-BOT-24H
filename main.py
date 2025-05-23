@@ -104,8 +104,7 @@ async def quiz_cmd(interaction: discord.Interaction, genre: str, difficulty: str
     quiz = random.choice(genre_data[difficulty])
     user_id = str(interaction.user.id)
     active_quizzes[user_id] = {"answer": quiz["answer"], "channel_id": interaction.channel.id}
-    await interaction.user.send(f"問題ですわ♪: {quiz['question']}
-※このDMに答えを返信してね♡")
+    await interaction.user.send(f"問題ですわ♪: {quiz['question']}\n※このDMに答えを返信してね♡")
     await interaction.response.send_message("クイズをDMで送信しましたわ♪", ephemeral=True)
 
 # --- メッセージ処理 ---
@@ -163,16 +162,12 @@ async def on_message(message):
         response = await loop.run_in_executor(None, lambda: model.generate_content(history))
         text = response.text
 
-        # フィリピン/日本の天気質問への代表的な回答処理
+        # 天気への対応
         lowered = message.content.lower()
         if "日本の天気" in lowered or "日本の天気は" in lowered:
-            text = "日本の代表として東京の天気をお伝えします。
-" + text.split("
-")[0]
+            text = "日本の代表として東京の天気をお伝えします。\n" + text.split("\n")[0]
         elif "フィリピンの天気" in lowered or "フィリピンの天気は" in lowered:
-            text = "フィリピンの代表としてセブの天気をお伝えします。
-" + text.split("
-")[0]
+            text = "フィリピンの代表としてセブの天気をお伝えします。\n" + text.split("\n")[0]
 
         text = text.replace("にゃん♡", "").replace("にゃん", "")
         if len(text) > 2000:

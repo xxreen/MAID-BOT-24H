@@ -7,10 +7,9 @@ from threading import Thread
 import google.generativeai as genai
 import asyncio
 import traceback
-import difflib
 import aiohttp
 
-# --- 環境変数から読み込み ---
+# --- 設定 ---
 TOKEN = os.getenv("TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OPENWEATHERMAP_API_KEY = os.getenv("OPENWEATHERMAP_API_KEY")
@@ -33,6 +32,7 @@ def run():
 def keep_alive():
     Thread(target=run).start()
 
+# --- Bot初期化 ---
 intents = discord.Intents.default()
 intents.members = True
 intents.messages = True
@@ -40,7 +40,7 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
-# --- モード設定 ---
+# --- モード・クイズ設定 ---
 MODES = {
     "default": "毒舌AIモード",
     "neet": "ニートモード（自虐）",
@@ -49,11 +49,9 @@ MODES = {
     "tgif": "神崇拝モード（感謝）"
 }
 current_mode = "default"
-
 active_quizzes = {}
 conversation_history = {}
 
-# --- クイズデータ ---
 QUIZ_DATA = {
     "アニメ": {
         "easy": [
@@ -61,12 +59,12 @@ QUIZ_DATA = {
             {"question": "『ポケモン』のピカチュウの進化前の姿は？", "answer": "ピチュー"}
         ],
         "normal": [
-            {"question": "『ワンピース』の麦わらの一味の船長は？", "answer": "モンキー・D・ルフィ"},
-            {"question": "『ナルト』の主人公の名前は？", "answer": "うずまきナルト"}
+            {"question": "『進撃の巨人』で巨人化できる主人公の名前は？", "answer": "エレン・イェーガー"},
+            {"question": "『ワンピース』の主人公は？", "answer": "モンキー・D・ルフィ"}
         ],
         "hard": [
-            {"question": "『新世紀エヴァンゲリオン』の主人公は？", "answer": "碇シンジ"},
-            {"question": "『コードギアス』の主人公は？", "answer": "ルルーシュ・ランペルージ"}
+            {"question": "『銀魂』の主人公は？", "answer": "坂田銀時"},
+            {"question": "『ナルト』でうずまきナルトの師匠は？", "answer": "ジライヤ"}
         ]
     },
     "数学": {
@@ -75,26 +73,26 @@ QUIZ_DATA = {
             {"question": "3×3は？", "answer": "9"}
         ],
         "normal": [
-            {"question": "√16は？", "answer": "4"},
-            {"question": "2の3乗は？", "answer": "8"}
+            {"question": "2の3乗は？", "answer": "8"},
+            {"question": "平方根64は？", "answer": "8"}
         ],
         "hard": [
-            {"question": "微分の定義は？", "answer": "極限を用いて関数の変化率を求めること"},
-            {"question": "積分定数は何と呼ばれる？", "answer": "積分定数"}
+            {"question": "円周率の近似値（小数点以下2桁）を答えよ。", "answer": "3.14"},
+            {"question": "三角関数のsin90度の値は？", "answer": "1"}
         ]
     },
     "社会": {
         "easy": [
             {"question": "日本の首都は？", "answer": "東京"},
-            {"question": "日本の通貨単位は？", "answer": "円"}
+            {"question": "アメリカ合衆国の大統領の名前は？", "answer": "バイデン"}
         ],
         "normal": [
-            {"question": "日本の天皇の名前は？", "answer": "徳仁"},
-            {"question": "日本の国会は何院制？", "answer": "二院制"}
+            {"question": "日本の国会は衆議院と何院で構成されている？", "answer": "参議院"},
+            {"question": "EUの本部がある都市は？", "answer": "ブリュッセル"}
         ],
         "hard": [
-            {"question": "日本の三権分立の三つは？", "answer": "立法、行政、司法"},
-            {"question": "1945年に終戦した戦争は？", "answer": "第二次世界大戦"}
+            {"question": "国連の正式名称は？", "answer": "国際連合"},
+            {"question": "日本の元号で平成の前は？", "answer": "昭和"}
         ]
     },
     "理科": {
@@ -103,50 +101,43 @@ QUIZ_DATA = {
             {"question": "地球は何番目の惑星？", "answer": "3"}
         ],
         "normal": [
-            {"question": "光の速度は約何km/s？", "answer": "30万"},
-            {"question": "元素記号でOは何？", "answer": "酸素"}
+            {"question": "光の速度は秒速約何キロ？", "answer": "30万"},
+            {"question": "元素記号Feは何の元素？", "answer": "鉄"}
         ],
         "hard": [
-            {"question": "ニュートンの運動の第2法則は？", "answer": "F=ma"},
-            {"question": "DNAの正式名称は？", "answer": "デオキシリボ核酸"}
+            {"question": "ニュートンの運動の第1法則の別名は？", "answer": "慣性の法則"},
+            {"question": "DNAの二重らせん構造を発見した科学者は？", "answer": "ワトソンとクリック"}
         ]
     },
     "地理": {
         "easy": [
-            {"question": "日本で一番高い山は？", "answer": "富士山"},
-            {"question": "アメリカの首都は？", "answer": "ワシントンD.C."}
+            {"question": "日本の一番大きな島は？", "answer": "本州"},
+            {"question": "アフリカ大陸で最も大きな国は？", "answer": "アルジェリア"}
         ],
         "normal": [
-            {"question": "世界で一番大きい砂漠は？", "answer": "サハラ砂漠"},
-            {"question": "日本の最北端の島は？", "answer": "宗谷岬"}
+            {"question": "エベレスト山がある国は？", "answer": "ネパール"},
+            {"question": "ナイル川はどの大陸を流れている？", "answer": "アフリカ"}
         ],
         "hard": [
-            {"question": "ユーラシア大陸の最南端は？", "answer": "ケープ・ロス"},
-            {"question": "アフリカの最大の湖は？", "answer": "ビクトリア湖"}
+            {"question": "ロシアの首都は？", "answer": "モスクワ"},
+            {"question": "世界で一番面積の大きい国は？", "answer": "ロシア"}
         ]
     },
     "歴史": {
         "easy": [
-            {"question": "織田信長は何時代の武将？", "answer": "戦国時代"},
-            {"question": "明治維新は何年に始まった？", "answer": "1868"}
+            {"question": "徳川家康は何時代の人物？", "answer": "江戸時代"},
+            {"question": "織田信長が死んだ年は？", "answer": "1582"}
         ],
         "normal": [
-            {"question": "鎌倉幕府を開いたのは誰？", "answer": "源頼朝"},
-            {"question": "江戸時代の将軍は何家？", "answer": "徳川家"}
+            {"question": "明治維新は何年に始まった？", "answer": "1868"},
+            {"question": "第二次世界大戦は何年に終わった？", "answer": "1945"}
         ],
         "hard": [
-            {"question": "関ヶ原の戦いは何年？", "answer": "1600"},
-            {"question": "大正時代は何年から何年？", "answer": "1912-1926"}
+            {"question": "大正時代は何年から何年まで？", "answer": "1912-1926"},
+            {"question": "日本の最初の元号は？", "answer": "大化"}
         ]
     }
 }
-
-# --- 類似度判定関数 ---
-def is_answer_correct(user_answer: str, correct_answer: str, threshold=0.7):
-    user_answer_norm = user_answer.lower().replace(" ", "").replace("　", "")
-    correct_answer_norm = correct_answer.lower().replace(" ", "").replace("　", "")
-    ratio = difflib.SequenceMatcher(None, user_answer_norm, correct_answer_norm).ratio()
-    return ratio >= threshold
 
 # --- 天気取得関数 ---
 async def get_weather(city_name: str):
@@ -168,6 +159,12 @@ async def get_weather(city_name: str):
                     f"湿度: {humidity}%\n"
                     f"風速: {wind_speed} m/s")
 
+# --- 正誤判定関数（大文字小文字無視、空白無視、部分一致で正解判定） ---
+def is_correct_answer(user_answer: str, correct_answer: str):
+    ua = user_answer.replace(" ", "").lower()
+    ca = correct_answer.replace(" ", "").lower()
+    return ca in ua or ua in ca
+
 # --- 起動時 ---
 @bot.event
 async def on_ready():
@@ -181,12 +178,13 @@ async def on_member_join(member):
     if channel:
         await channel.send(f"{member.mention} ようこそ、我が主に仕える地へ……。何か困ったら気軽に声をかけてくださいね。")
 
-# --- /mode ---（ご主人様専用）
+# --- /mode ---
 @tree.command(name="mode", description="モードを切り替えます（ご主人様専用）")
 async def mode_cmd(interaction: discord.Interaction, mode: str):
     if str(interaction.user.id) != OWNER_ID:
         await interaction.response.send_message("このコマンドはご主人様専用ですわ♡", ephemeral=True)
         return
+
     global current_mode
     if mode in MODES:
         current_mode = mode
@@ -194,46 +192,50 @@ async def mode_cmd(interaction: discord.Interaction, mode: str):
     else:
         await interaction.response.send_message(f"無効なモードですわ。使えるモード: {', '.join(MODES.keys())}", ephemeral=True)
 
-# --- /quiz --- クイズ出題
+# --- /quiz ---
 @tree.command(name="quiz", description="クイズを出題します")
 async def quiz_cmd(interaction: discord.Interaction, genre: str, difficulty: str):
     genre_data = QUIZ_DATA.get(genre)
     if not genre_data or difficulty not in genre_data:
         await interaction.response.send_message("ジャンルまたは難易度が無効ですわ、ごめんなさいね。", ephemeral=True)
         return
+
     quiz = random.choice(genre_data[difficulty])
     user_id = str(interaction.user.id)
     active_quizzes[user_id] = {"answer": quiz["answer"], "channel_id": interaction.channel.id}
-    channel = bot.get_channel(ALLOWED_CHANNEL_ID)
-    if channel:
-        await channel.send(f"{interaction.user.mention} さん、問題ですわ♪: {quiz['question']}")
+    
+    quiz_channel = bot.get_channel(ALLOWED_CHANNEL_ID)
+    if quiz_channel:
+        await quiz_channel.send(f"{interaction.user.mention} さんへの問題ですわ♪: {quiz['question']}")
     await interaction.user.send(f"問題ですわ♪: {quiz['question']}\n※このDMに答えを返信してね♡")
-    await interaction.response.send_message("クイズを出題しましたわ♪", ephemeral=True)
+    await interaction.response.send_message("クイズを出題しましたわ♪ チャンネルとDMを確認してくださいね。", ephemeral=True)
 
 # --- メッセージ処理 ---
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
-    # 許可されたチャンネルかDMのみ
+
+    # 許可されたチャンネルとDMのみ
     if not isinstance(message.channel, discord.DMChannel) and message.channel.id != ALLOWED_CHANNEL_ID:
         return
+
     user_id = str(message.author.id)
-    # クイズ解答処理（DM）
+
+    # クイズ解答処理
     if isinstance(message.channel, discord.DMChannel) and user_id in active_quizzes:
         quiz = active_quizzes[user_id]
-        answer = quiz["answer"]
+        correct_answer = quiz["answer"]
         channel = bot.get_channel(quiz["channel_id"])
         if channel:
-            if is_answer_correct(message.content.strip(), answer):
+            if is_correct_answer(message.content, correct_answer):
                 await channel.send(f"{message.author.name} さんの回答：正解ですわ！お見事ですの♪🎉")
             else:
-                await channel.send(f"{message.author.name} さんの回答：残念ですわ、不正解ですの。正解は「{answer}」でしたわよ。")
+                await channel.send(f"{message.author.name} さんの回答：残念ですわ、不正解ですの。正解は「{correct_answer}」でしたわよ。")
         del active_quizzes[user_id]
         return
 
-    # Gemini応答生成（元々の会話機能）
-    user_id = str(message.author.id)
+    # Gemini応答生成
     prefix = ""
     if user_id == OWNER_ID:
         prefix = "ご主人様、承知いたしました。→ "
@@ -249,8 +251,10 @@ async def on_message(message):
             prefix = "馬鹿にも分かるように答えてやるよ。→ "
         else:
             prefix = "はいはい、また面倒な質問ね。→ "
+
     prompt = prefix + message.content
 
+    # コンテキスト記憶
     history = conversation_history.get(user_id, [])
     history.append({"role": "user", "parts": [prompt]})
     if len(history) > 5:
@@ -261,25 +265,28 @@ async def on_message(message):
         if "日本の天気" in lowered or "東京の天気" in lowered:
             weather_text = await get_weather("Tokyo")
             await message.channel.send(weather_text)
-            return
+        elif "フィリピンの天気" in lowered or "セブの天気" in lowered:
+            weather_text = await get_weather("Cebu")
+            await message.channel.send(weather_text)
+        else:
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, lambda: model.generate_content(history))
+            text = response.text
 
-        response = model.generate(
-            prompt=prompt,
-            temperature=0.7,
-            max_output_tokens=512,
-            candidate_count=1,
-            top_p=0.8,
-            top_k=40,
-            stop_sequences=["\n"]
-        )
-        text = response.generations[0].text
-        conversation_history[user_id] = history
-        await message.channel.send(text)
-    except Exception as e:
-        tb_str = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
-        await message.channel.send(f"エラーが発生しました。\n{tb_str}")
+            # 「にゃん」削除
+            text = text.replace("にゃん♡", "").replace("にゃん", "")
+
+            if len(text) > 2000:
+                text = text[:1997] + "..."
+
+            await message.channel.send(text)
+            conversation_history[user_id] = history
+    except Exception:
+        traceback.print_exc()
+        await message.channel.send("応答に失敗しましたわ、ごめんなさい。")
 
     await bot.process_commands(message)
 
+# --- 実行 ---
 keep_alive()
 bot.run(TOKEN)

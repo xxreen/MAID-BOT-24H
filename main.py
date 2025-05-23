@@ -7,12 +7,13 @@ from threading import Thread
 import google.generativeai as genai
 import asyncio
 import traceback
-import requests
+import datetime
+import aiohttp  # 非同期HTTPクライアント
 
 # --- 設定 ---
 TOKEN = os.getenv("TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
+OPENWEATHERMAP_API_KEY = os.getenv("OPENWEATHERMAP_API_KEY")
 OWNER_ID = "1016316997086216222"
 ALLOWED_CHANNEL_ID = 1374589955996778577
 WELCOME_CHANNEL_ID = 1370406946812854404
@@ -68,18 +69,24 @@ QUIZ_DATA = {
 }
 
 # --- 天気取得関数 ---
-def get_weather(city):
-    url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&lang=ja&units=metric"
-    try:
-        response = requests.get(url)
-        data = response.json()
-        if data.get("cod") != 200:
-            return f"天気情報が取得できませんでした：{data.get('message', '不明なエラー')}"
-        weather = data["weather"][0]["description"]
-        temp = data["main"]["temp"]
-        return f"{city}の現在の天気は「{weather}」、気温は{temp}℃ですわ♪"
-    except Exception as e:
-        return f"天気情報取得中にエラーが発生しました：{e}"
+async def get_weather(city_name: str):
+    if not OPENWEATHERMAP_API_KEY:
+        return "天気情報のAPIキーが設定されていません。"
+    url = f"http://api.openweathermap.org/data/2.5/weather?q={city_name}&appid={OPENWEATHERMAP_API_KEY}&lang=ja&units=metric"
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as resp:
+            if resp.status != 200:
+                return f"{city_name} の天気情報が取得できませんでした。"
+            data = await resp.json()
+            weather_desc = data['weather'][0]['description']
+            temp = data['main']['temp']
+            humidity = data['main']['humidity']
+            wind_speed = data['wind']['speed']
+            return (f"{city_name} の天気:\n"
+                    f"天気: {weather_desc}\n"
+                    f"気温: {temp}℃\n"
+                    f"湿度: {humidity}%\n"
+                    f"風速: {wind_speed} m/s")
 
 # --- 起動時 ---
 @bot.event
@@ -122,14 +129,6 @@ async def quiz_cmd(interaction: discord.Interaction, genre: str, difficulty: str
     await interaction.user.send(f"問題ですわ♪: {quiz['question']}\n※このDMに答えを返信してね♡")
     await interaction.response.send_message("クイズをDMで送信しましたわ♪", ephemeral=True)
 
-# --- !weather コマンド ---
-@bot.command(name="weather")
-async def weather(ctx, *, city: str):
-    if ctx.channel.id != ALLOWED_CHANNEL_ID:
-        return
-    result = get_weather(city)
-    await ctx.send(result)
-
 # --- メッセージ処理 ---
 @bot.event
 async def on_message(message):
@@ -156,30 +155,53 @@ async def on_message(message):
         return
 
     # Gemini応答生成
-    prefix = "ご主人様、承知いたしました。→ " if user_id == OWNER_ID else {
-        "tgif": "神に感謝しながらお答えいたします。→ ",
-        "neet": "無能ですが一応お答えします……。→ ",
-        "debate": "論理的に解説いたします。→ ",
-        "roast": "馬鹿にも分かるように答えてやるよ。→ ",
-    }.get(current_mode, "はいはい、また面倒な質問ね。→ ")
+    prefix = ""
+    if user_id == OWNER_ID:
+        prefix = "ご主人様、承知いたしました。→ "
+    else:
+        mode = current_mode
+        if mode == "tgif":
+            prefix = "神に感謝しながらお答えいたします。→ "
+        elif mode == "neet":
+            prefix = "無能ですが一応お答えします……。→ "
+        elif mode == "debate":
+            prefix = "論理的に解説いたします。→ "
+        elif mode == "roast":
+            prefix = "馬鹿にも分かるように答えてやるよ。→ "
+        else:
+            prefix = "はいはい、また面倒な質問ね。→ "
 
     prompt = prefix + message.content
+
+    # コンテキスト記憶
     history = conversation_history.get(user_id, [])
     history.append({"role": "user", "parts": [prompt]})
     if len(history) > 5:
         history = history[-5:]
 
     try:
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(None, lambda: model.generate_content(history))
-        text = response.text
+        # まず天気関連の質問か判定して優先的に処理
+        lowered = message.content.lower()
+        if "日本の天気" in lowered or "東京の天気" in lowered:
+            weather_text = await get_weather("Tokyo")
+            await message.channel.send(weather_text)
+        elif "フィリピンの天気" in lowered or "セブの天気" in lowered:
+            weather_text = await get_weather("Cebu")
+            await message.channel.send(weather_text)
+        else:
+            # それ以外はGeminiで生成
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, lambda: model.generate_content(history))
+            text = response.text
 
-        text = text.replace("にゃん♡", "").replace("にゃん", "")
-        if len(text) > 2000:
-            text = text[:1997] + "..."
+            # 「にゃん」削除
+            text = text.replace("にゃん♡", "").replace("にゃん", "")
 
-        await message.channel.send(text)
-        conversation_history[user_id] = history
+            if len(text) > 2000:
+                text = text[:1997] + "..."
+
+            await message.channel.send(text)
+            conversation_history[user_id] = history
     except Exception:
         traceback.print_exc()
         await message.channel.send("応答に失敗しましたわ、ごめんなさい。")

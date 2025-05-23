@@ -7,39 +7,32 @@ import time
 from flask import Flask
 from threading import Thread
 
-# --- Discord & Gemini設定 ---
+# --- 設定 ---
 OWNER_ID = "1016316997086216222"
 TARGET_CHANNEL_ID = 1374589955996778577
-
 DISCORD_TOKEN = os.getenv("TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("models/gemini-1.5-flash")
 
-# --- Flask Webサーバー ---
-app = Flask('')
-
+# FlaskでRenderポート問題回避
+app = Flask(__name__)
 @app.route('/')
 def home():
     return "Bot is alive!"
-
 def run_web():
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
-
 def keep_alive():
-    t = Thread(target=run_web)
-    t.start()
+    Thread(target=run_web).start()
 
-# --- Discord Bot設定 ---
+# Discord Bot準備
 intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
-
 bot = commands.Bot(command_prefix="/", intents=intents)
 
-# --- 会話履歴 & モード管理 ---
 user_last_request = {}
 user_memory = {}
 user_modes = {}
@@ -53,7 +46,6 @@ MODES = {
     "tgif": "神崇拝モード（感謝）",
 }
 
-# --- モード切替コマンド ---
 @bot.command()
 async def mode(ctx, *, mode_name=None):
     user_id = str(ctx.author.id)
@@ -62,21 +54,17 @@ async def mode(ctx, *, mode_name=None):
         await ctx.send(f"モードを『{MODES[mode_name]}』に切り替えました。")
     else:
         current = MODES.get(user_modes.get(user_id, "default"))
-        await ctx.send(f"現在のモードは『{current}』です。
-利用可能なモード: {', '.join(MODES.values())}")
+        await ctx.send(f"現在のモードは『{current}』です。\n利用可能なモード: {', '.join(MODES.values())}")
 
-# --- 応答生成関数 ---
 async def generate_response(message_content: str, author_id: str, author_name: str) -> str:
     now = time.time()
     if author_id in user_last_request and now - user_last_request[author_id] < COOLDOWN_SECONDS:
         return "ちょっと待ちな。クールダウン中だよ。"
 
     user_last_request[author_id] = now
-
     history = user_memory.get(author_id, [])
     history.append(f"{author_name}: {message_content}")
     user_memory[author_id] = history[-10:]
-
     memory_text = "\n".join(history)
     mode = user_modes.get(author_id, "default")
 
@@ -118,26 +106,21 @@ async def generate_response(message_content: str, author_id: str, author_name: s
         print("Geminiエラー:", e)
         return "しっかり返答はするものの…エラーが発生しました。GEMINIが休憩中なのかもね。"
 
-# --- メッセージイベント ---
 @bot.event
 async def on_message(message):
     if message.author.bot or message.channel.id != TARGET_CHANNEL_ID:
         return
-
     if message.content.startswith("/"):
         await bot.process_commands(message)
         return
-
     reply = await generate_response(message.content, str(message.author.id), message.author.name)
     await message.channel.send(reply)
 
-# --- 起動イベント ---
 @bot.event
 async def on_ready():
     print(f"ログイン成功: {bot.user}")
     print("起動しました！")
 
-# --- メイン起動 ---
 if __name__ == "__main__":
     keep_alive()
     bot.run(DISCORD_TOKEN)
